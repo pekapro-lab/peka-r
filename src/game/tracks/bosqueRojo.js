@@ -1,7 +1,7 @@
 export const bosqueRojo = {
   id: 'bosque',
   name: 'Bosque Rojo',
-  description: 'Trazado técnico entre pinos bajo cielo nocturno.',
+  description: 'Trazado técnico entre pinos y colinas.',
   laps: 3,
   roadWidth: 11,
   samplesPerSeg: 14,

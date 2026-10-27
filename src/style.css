@@ -70,7 +70,7 @@ canvas.game-canvas {
 }
 
 .logo {
-  font-size: clamp(2.2rem, 8vw, 3rem);
+  font-size: clamp(1.9rem, 7vw, 2.6rem);
   letter-spacing: 0.28em;
   font-weight: 700;
   color: var(--accent);
@@ -80,14 +80,17 @@ canvas.game-canvas {
 
 .tagline {
   color: var(--muted);
-  font-size: 0.95rem;
-  margin-bottom: 22px;
+  font-size: 0.9rem;
+  margin-bottom: 14px;
 }
 
 .track-list {
   display: grid;
-  gap: 10px;
-  margin-bottom: 18px;
+  gap: 8px;
+  margin-bottom: 12px;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .track-btn {
@@ -96,7 +99,7 @@ canvas.game-canvas {
   background: rgba(255, 255, 255, 0.04);
   color: var(--text);
   border-radius: 12px;
-  padding: 14px 16px;
+  padding: 9px 12px;
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s, transform 0.1s;
@@ -108,9 +111,34 @@ canvas.game-canvas {
   outline: none;
 }
 
-.track-btn .name { font-weight: 650; font-size: 1.05rem; display: block; }
-.track-btn .meta { color: var(--muted); font-size: 0.85rem; margin-top: 4px; display: block; }
-.track-btn .best { color: var(--red-glow); font-size: 0.8rem; margin-top: 6px; display: block; }
+.track-btn .name { font-weight: 650; font-size: 0.98rem; display: block; }
+.track-btn .meta { color: var(--muted); font-size: 0.78rem; margin-top: 2px; display: block; }
+.track-btn .best { color: var(--red-glow); font-size: 0.75rem; margin-top: 3px; display: block; }
+
+.tod-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.tod-btn {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.tod-btn.active {
+  border-color: var(--red);
+  background: rgba(255, 40, 40, 0.18);
+  box-shadow: 0 0 16px rgba(255, 40, 40, 0.2);
+}
 
 .menu-actions {
   display: flex;

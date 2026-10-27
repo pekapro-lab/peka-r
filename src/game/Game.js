@@ -5,6 +5,7 @@ import { buildTrack } from './TrackBuilder.js'
 import { getTrack } from './tracks/index.js'
 import { Input } from './Input.js'
 import { AudioEngine } from './AudioEngine.js'
+import { Environment } from './Environment.js'
 import { formatTime } from './format.js'
 
 
@@ -18,6 +19,7 @@ export class Game {
     this.ui = ui
     this.input = new Input()
     this.audio = new AudioEngine()
+    this.timeOfDay = localStorage.getItem('peka-r-tod') === 'day' ? 'day' : 'night'
     this.state = 'menu' // menu | countdown | racing | paused | finished
     this.cameraMode = 'hood' // hood | chase
     this.track = null
@@ -49,6 +51,8 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
     this.renderer.setSize(window.innerWidth, window.innerHeight)
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
+    this.renderer.toneMappingExposure = 1.0
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.domElement.className = 'game-canvas'
@@ -76,9 +80,19 @@ export class Game {
     this.sun.shadow.camera.top = 60
     this.sun.shadow.camera.bottom = -60
     this.scene.add(this.sun)
+    this.scene.add(this.sun.target)
 
     this.ambient = new THREE.AmbientLight(0x203040, 0.35)
     this.scene.add(this.ambient)
+
+    this.env = new Environment(this.scene)
+    // Wider shadow camera so day shadows look good on track
+    this.sun.shadow.mapSize.set(2048, 2048)
+    this.sun.shadow.camera.left = -90
+    this.sun.shadow.camera.right = 90
+    this.sun.shadow.camera.top = 90
+    this.sun.shadow.camera.bottom = -90
+    this.sun.shadow.bias = -0.0002
   }
 
   _bindUI() {
@@ -104,7 +118,13 @@ export class Game {
     this.ui.onToggleCamera = () => this.input.onToggleCamera()
     this.ui.onToggleMute = () => this.input.onMute()
     this.ui.onPause = () => this.input.onPause()
+    this.ui.onTimeOfDay = (mode) => {
+      this.timeOfDay = mode === 'day' ? 'day' : 'night'
+      localStorage.setItem('peka-r-tod', this.timeOfDay)
+      this.ui.setTimeOfDay(this.timeOfDay)
+    }
     this.ui.bindTouch(this.input)
+    this.ui.setTimeOfDay(this.timeOfDay)
   }
 
   startTrack(trackId) {
@@ -128,9 +148,11 @@ export class Game {
     })
     this.world.addContactMaterial(contact)
 
-    this._applyLighting(def.lighting)
-    this.track = buildTrack(this.world, this.scene, def)
+    const trackDef = { ...def, timeOfDay: this.timeOfDay }
+    this._applyLighting(this.timeOfDay)
+    this.track = buildTrack(this.world, this.scene, trackDef)
     this.car = new Car(this.world, this.scene, this.track.spawn)
+    this.car.setTimeOfDay(this.timeOfDay)
     this.totalLaps = this.track.laps
     this.lap = 1
     this.bestLap = Number(localStorage.getItem(bestKey(def.id))) || null
@@ -162,21 +184,33 @@ export class Game {
   }
 
   _applyLighting(mode) {
-    if (mode === 'night') {
-      this.scene.background = new THREE.Color(0x03050a)
-      this.scene.fog = new THREE.FogExp2(0x03050a, 0.014)
-      this.hemi.intensity = 0.25
-      this.sun.intensity = 0.15
-      this.sun.color.set(0x6688cc)
-      this.ambient.intensity = 0.25
+    this.env?.apply(mode)
+    if (mode === 'day') {
+      this.scene.background = new THREE.Color(0x9ec8f0)
+      this.scene.fog = new THREE.Fog(0xc8e0f5, 120, 420)
+      this.hemi.color.set(0xf0f7ff)
+      this.hemi.groundColor.set(0xc2a882)
+      this.hemi.intensity = 0.95
+      this.sun.intensity = 2.0
+      this.sun.color.set(0xfff3d6)
+      this.sun.position.set(70, 110, 45)
+      this.sun.castShadow = true
+      this.ambient.intensity = 0.55
+      this.ambient.color.set(0xffffff)
+      this.renderer.toneMappingExposure = 1.15
     } else {
-      // dusk
-      this.scene.background = new THREE.Color(0x0a0c16)
-      this.scene.fog = new THREE.FogExp2(0x0a0c16, 0.011)
-      this.hemi.intensity = 0.4
-      this.sun.intensity = 0.5
-      this.sun.color.set(0xffb090)
-      this.ambient.intensity = 0.3
+      this.scene.background = new THREE.Color(0x03050a)
+      this.scene.fog = new THREE.FogExp2(0x05070f, 0.011)
+      this.hemi.color.set(0x4a5a88)
+      this.hemi.groundColor.set(0x080a10)
+      this.hemi.intensity = 0.22
+      this.sun.intensity = 0.12
+      this.sun.color.set(0x6688cc)
+      this.sun.position.set(-40, 60, 20)
+      this.sun.castShadow = false
+      this.ambient.intensity = 0.2
+      this.ambient.color.set(0x1a2238)
+      this.renderer.toneMappingExposure = 1.0
     }
   }
 
@@ -355,6 +389,14 @@ export class Game {
       this.camera.fov = 60
     }
     this.camera.updateProjectionMatrix()
+
+    // Keep daylight shadows centered on the car
+    if (this.timeOfDay === 'day' && this.car) {
+      const p = this.car.getPosition()
+      this.sun.target.position.set(p.x, 0, p.z)
+      this.sun.position.set(p.x + 70, 110, p.z + 45)
+      this.sun.target.updateMatrixWorld()
+    }
   }
 
   _onResize = () => {

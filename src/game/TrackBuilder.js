@@ -11,6 +11,17 @@ function catmullRom(p0, p1, p2, p3, t) {
   )
 }
 
+
+function lightenHex(hex, amount) {
+  const r = (hex >> 16) & 255
+  const g = (hex >> 8) & 255
+  const b = hex & 255
+  const lr = Math.min(255, Math.round(r + (255 - r) * amount))
+  const lg = Math.min(255, Math.round(g + (255 - g) * amount))
+  const lb = Math.min(255, Math.round(b + (255 - b) * amount))
+  return (lr << 16) | (lg << 8) | lb
+}
+
 export function sampleLoop(controlPoints, samplesPerSeg = 12) {
   const pts = controlPoints.map((p) => new THREE.Vector3(p.x, p.y || 0, p.z))
   const n = pts.length
@@ -43,8 +54,16 @@ export function buildTrack(world, scene, def) {
   bodies.push(groundBody)
 
   const groundSize = def.groundSize || 420
+  const isDay = def.timeOfDay === 'day'
+  let groundColor = def.groundColor || 0x0c1018
+  let roadColor = def.roadColor || 0x1a1d24
+  if (isDay) {
+    // Lift dark theme colors so day reads clearly
+    groundColor = lightenHex(groundColor, 0.35)
+    roadColor = lightenHex(roadColor, 0.22)
+  }
   const groundMat = new THREE.MeshStandardMaterial({
-    color: def.groundColor || 0x0c1018,
+    color: groundColor,
     roughness: 0.95,
     metalness: 0.05,
   })
@@ -94,13 +113,37 @@ export function buildTrack(world, scene, def) {
   roadGeo.computeVertexNormals()
 
   const roadMat = new THREE.MeshStandardMaterial({
-    color: def.roadColor || 0x1a1d24,
+    color: roadColor,
     roughness: 0.85,
     metalness: 0.1,
   })
   const road = new THREE.Mesh(roadGeo, roadMat)
   road.receiveShadow = true
   group.add(road)
+
+  // Soft shoulder / runoff tint beside road (visual only)
+  const shoulderMat = new THREE.MeshStandardMaterial({
+    color: def.shoulderColor || 0x2a2e28,
+    roughness: 0.95,
+    metalness: 0.02,
+  })
+  for (let i = 0; i < path.length; i += 2) {
+    const a = path[i]
+    const b = path[(i + 1) % path.length]
+    const dir = new THREE.Vector3().subVectors(b, a)
+    const len = Math.max(0.5, dir.length())
+    dir.normalize()
+    const yaw = Math.atan2(dir.x, dir.z)
+    const side = new THREE.Vector3(-dir.z, 0, dir.x)
+    for (const sign of [1, -1]) {
+      const sh = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.02, len * 1.9), shoulderMat)
+      const pos = a.clone().addScaledVector(side, sign * (half + 1.4))
+      sh.position.set(pos.x, 0.015, pos.z)
+      sh.rotation.y = yaw
+      sh.receiveShadow = true
+      group.add(sh)
+    }
+  }
 
   // Center dashed line
   const lineMat = new THREE.MeshBasicMaterial({ color: 0xd8dce8 })
@@ -186,13 +229,18 @@ export function buildTrack(world, scene, def) {
     group.add(post)
   }
 
-  // Scenery: grandstands / trees / lights depending on theme
+  // Scenery depending on theme
+  const isNight = def.timeOfDay !== 'day'
   if (def.theme === 'night-city') {
     addGrandstands(group, path, half, def)
-    addStreetLights(group, path, half)
+    addStreetLights(group, path, half, isNight)
+  } else if (def.theme === 'coast') {
+    addCoastScenery(group, path, half, def)
+  } else if (def.theme === 'mountain') {
+    addMountainScenery(group, path, half, def)
   } else {
-    addPines(group, path, half)
-    addHills(group, def)
+    addPines(group, path, half, isDay ? 0x2d7a42 : 0x1a3d28)
+    addHills(group, def, isDay)
   }
 
   scene.add(group)
@@ -242,7 +290,7 @@ function addGrandstands(group, path, half, def) {
   }
 }
 
-function addStreetLights(group, path, half) {
+function addStreetLights(group, path, half, isNight = true) {
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x22262e, metalness: 0.6, roughness: 0.4 })
   for (let i = 0; i < path.length; i += 10) {
     const a = path[i]
@@ -254,16 +302,213 @@ function addStreetLights(group, path, half) {
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 5.5, 6), poleMat)
       pole.position.set(p.x, 2.75, p.z)
       group.add(pole)
-      const lamp = new THREE.PointLight(0xffd9a0, 0.55, 22, 2)
-      lamp.position.set(p.x, 5.2, p.z)
-      group.add(lamp)
+      const head = new THREE.Mesh(
+        new THREE.BoxGeometry(0.55, 0.12, 0.35),
+        new THREE.MeshStandardMaterial({
+          color: 0x222222,
+          emissive: isNight ? 0xffd9a0 : 0x000000,
+          emissiveIntensity: isNight ? 0.8 : 0,
+        }),
+      )
+      head.position.set(p.x, 5.45, p.z)
+      group.add(head)
+      if (isNight) {
+        const lamp = new THREE.PointLight(0xffd9a0, 0.7, 26, 2)
+        lamp.position.set(p.x, 5.2, p.z)
+        group.add(lamp)
+      }
     }
   }
 }
 
-function addPines(group, path, half) {
+function addCoastScenery(group, path, half, def) {
+  const isNight = def.timeOfDay !== 'day'
+
+  // Ocean — large plane offset to one side of the circuit
+  const waterMat = new THREE.MeshStandardMaterial({
+    color: isNight ? 0x0a2a48 : 0x1e7eb8,
+    roughness: 0.18,
+    metalness: 0.55,
+    transparent: true,
+    opacity: 0.92,
+  })
+  const water = new THREE.Mesh(new THREE.CircleGeometry(260, 48), waterMat)
+  water.rotation.x = -Math.PI / 2
+  water.position.set(190, -0.08, 10)
+  group.add(water)
+
+  // Lighter shallow water ring
+  const shallow = new THREE.Mesh(
+    new THREE.RingGeometry(70, 120, 40),
+    new THREE.MeshStandardMaterial({
+      color: isNight ? 0x1a4a66 : 0x4eb8d4,
+      roughness: 0.35,
+      metalness: 0.3,
+      transparent: true,
+      opacity: 0.55,
+    }),
+  )
+  shallow.rotation.x = -Math.PI / 2
+  shallow.position.set(150, -0.04, 10)
+  group.add(shallow)
+
+  // Beach strip between track and water
+  const sandMat = new THREE.MeshStandardMaterial({
+    color: isNight ? 0x6a5a3e : 0xe2c990,
+    roughness: 1,
+  })
+  for (let i = 0; i < 18; i++) {
+    const beach = new THREE.Mesh(new THREE.SphereGeometry(16 + (i % 3) * 5, 8, 6), sandMat)
+    const ang = -0.6 + (i / 18) * 1.6
+    beach.position.set(95 + Math.cos(ang) * 40, -7, Math.sin(ang) * 90)
+    beach.scale.set(1.6, 0.22, 1.3)
+    beach.receiveShadow = true
+    group.add(beach)
+  }
+
+  // Inland dunes
+  for (let i = 0; i < 10; i++) {
+    const dune = new THREE.Mesh(new THREE.SphereGeometry(12 + (i % 4) * 3, 8, 6), sandMat)
+    const ang = Math.PI + (i / 10) * Math.PI
+    dune.position.set(Math.cos(ang) * 130, -5, Math.sin(ang) * 130)
+    dune.scale.set(1.5, 0.3, 1.2)
+    group.add(dune)
+  }
+
+  // Palms along the seaside edge
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x7a5530, roughness: 0.85 })
+  const leafMat = new THREE.MeshStandardMaterial({
+    color: isNight ? 0x1a4a28 : 0x2f9a45,
+    roughness: 0.75,
+  })
+  for (let i = 0; i < path.length; i += 5) {
+    const a = path[i]
+    const b = path[(i + 1) % path.length]
+    const dir = new THREE.Vector3().subVectors(b, a).normalize()
+    const side = new THREE.Vector3(-dir.z, 0, dir.x)
+    // Prefer the side facing +X (coast)
+    const towardCoast = side.x > 0 ? 1 : -1
+    for (const sign of [towardCoast, -towardCoast]) {
+      if (sign !== towardCoast && (i % 10 !== 0)) continue
+      const dist = half + (sign === towardCoast ? 6 : 8) + (i % 4)
+      const p = a.clone().addScaledVector(side, sign * dist)
+      const lean = sign * 0.15
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, 5.2, 6), trunkMat)
+      trunk.position.set(p.x, 2.5, p.z)
+      trunk.rotation.z = lean
+      trunk.castShadow = true
+      group.add(trunk)
+      for (let k = 0; k < 7; k++) {
+        const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.55, 3.2, 4, 1, true), leafMat)
+        leaf.position.set(p.x + lean * 2.0, 4.6, p.z)
+        leaf.rotation.y = (k / 7) * Math.PI * 2
+        leaf.rotation.x = 1.05
+        leaf.castShadow = true
+        group.add(leaf)
+      }
+    }
+  }
+
+  // Simple pier / jetty decoration
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5a4030, roughness: 0.9 })
+  const pier = new THREE.Mesh(new THREE.BoxGeometry(4, 0.35, 28), wood)
+  pier.position.set(135, 0.4, -20)
+  pier.castShadow = true
+  group.add(pier)
+  for (const z of [-28, -14, 0, 14]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.28, 2.2, 6), wood)
+    post.position.set(135, 0.9, -20 + z * 0.35)
+    group.add(post)
+  }
+}
+
+function addMountainScenery(group, path, half, def) {
+  const isNight = def.timeOfDay !== 'day'
+  const rockMat = new THREE.MeshStandardMaterial({
+    color: isNight ? 0x2a322c : 0x5a6a58,
+    roughness: 0.92,
+  })
+  const cliffMat = new THREE.MeshStandardMaterial({
+    color: isNight ? 0x3a3836 : 0x7a746c,
+    roughness: 0.88,
+  })
+  const snowMat = new THREE.MeshStandardMaterial({
+    color: isNight ? 0xb8c4d8 : 0xf2f6ff,
+    roughness: 0.7,
+  })
+
+  // Layered peaks with snow caps
+  for (let i = 0; i < 16; i++) {
+    const h = 32 + (i % 5) * 12
+    const r = 10 + (i % 4) * 3.5
+    const peak = new THREE.Mesh(new THREE.ConeGeometry(r, h, 7), rockMat)
+    const ang = (i / 16) * Math.PI * 2
+    const dist = 100 + (i % 5) * 16
+    peak.position.set(Math.cos(ang) * dist, h * 0.32 - 2, Math.sin(ang) * dist)
+    peak.castShadow = true
+    peak.receiveShadow = true
+    group.add(peak)
+    if (h > 40) {
+      const snow = new THREE.Mesh(new THREE.ConeGeometry(r * 0.45, h * 0.28, 7), snowMat)
+      snow.position.set(peak.position.x, peak.position.y + h * 0.28, peak.position.z)
+      group.add(snow)
+    }
+  }
+
+  // Mid hills closer in
+  for (let i = 0; i < 10; i++) {
+    const hill = new THREE.Mesh(new THREE.SphereGeometry(18 + (i % 3) * 6, 10, 8), rockMat)
+    const ang = (i / 10) * Math.PI * 2 + 0.2
+    hill.position.set(Math.cos(ang) * 75, -6, Math.sin(ang) * 75)
+    hill.scale.y = 0.45
+    hill.receiveShadow = true
+    group.add(hill)
+  }
+
+  // Rock walls / cliffs hugging the technical sections
+  for (let i = 0; i < path.length; i += 4) {
+    const a = path[i]
+    const b = path[(i + 1) % path.length]
+    const dir = new THREE.Vector3().subVectors(b, a).normalize()
+    const side = new THREE.Vector3(-dir.z, 0, dir.x)
+    const sign = i % 8 < 4 ? 1 : -1
+    const p = a.clone().addScaledVector(side, sign * (half + 5.5 + (i % 3)))
+    const h = 3.5 + (i % 4) * 1.2
+    const rock = new THREE.Mesh(new THREE.BoxGeometry(4.2, h, 5.5), cliffMat)
+    rock.position.set(p.x, h / 2, p.z)
+    rock.rotation.y = Math.atan2(dir.x, dir.z) + (i % 2) * 0.25
+    rock.castShadow = true
+    rock.receiveShadow = true
+    group.add(rock)
+  }
+
+  // Highland pines (sparser)
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x3b2a1a, roughness: 0.9 })
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0x1a3d28, roughness: 0.85 })
+  const leafMat = new THREE.MeshStandardMaterial({
+    color: isNight ? 0x163528 : 0x1f5a36,
+    roughness: 0.85,
+  })
+  for (let i = 0; i < path.length; i += 8) {
+    const a = path[i]
+    const b = path[(i + 1) % path.length]
+    const dir = new THREE.Vector3().subVectors(b, a).normalize()
+    const side = new THREE.Vector3(-dir.z, 0, dir.x)
+    for (const sign of [1, -1]) {
+      const p = a.clone().addScaledVector(side, sign * (half + 10 + (i % 5)))
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 2.4, 5), trunkMat)
+      trunk.position.set(p.x, 1.2, p.z)
+      group.add(trunk)
+      const leaves = new THREE.Mesh(new THREE.ConeGeometry(1.5, 3.8, 7), leafMat)
+      leaves.position.set(p.x, 3.6, p.z)
+      leaves.castShadow = true
+      group.add(leaves)
+    }
+  }
+}
+
+function addPines(group, path, half, leafColor = 0x1a3d28) {
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x3b2a1a, roughness: 0.9 })
+  const leafMat = new THREE.MeshStandardMaterial({ color: leafColor, roughness: 0.85 })
   for (let i = 0; i < path.length; i += 5) {
     const a = path[i]
     const b = path[(i + 1) % path.length]
@@ -284,8 +529,10 @@ function addPines(group, path, half) {
   }
 }
 
-function addHills(group, def) {
-  const mat = new THREE.MeshStandardMaterial({ color: def.hillColor || 0x152218, roughness: 1 })
+function addHills(group, def, isDay = false) {
+  let c = def.hillColor || 0x152218
+  if (isDay) c = lightenHex(c, 0.4)
+  const mat = new THREE.MeshStandardMaterial({ color: c, roughness: 1 })
   for (let i = 0; i < 10; i++) {
     const hill = new THREE.Mesh(new THREE.SphereGeometry(18 + (i % 4) * 5, 10, 8), mat)
     const ang = (i / 10) * Math.PI * 2

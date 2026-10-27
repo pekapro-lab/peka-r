@@ -10,6 +10,8 @@ export class UI {
     this.onToggleCamera = null
     this.onToggleMute = null
     this.onPause = null
+    this.onTimeOfDay = null
+    this.timeOfDay = 'night'
 
     this.el = document.createElement('div')
     this.el.className = 'overlay'
@@ -17,8 +19,12 @@ export class UI {
       <div class="menu" id="menu">
         <div class="menu-card panel interactive">
           <div class="logo">PEKA-R</div>
-          <div class="tagline">Muscle car nocturno · circuitos de carreras</div>
+          <div class="tagline">Muscle car · circuitos de carreras</div>
           <div class="track-list" id="track-list"></div>
+          <div class="tod-toggle" id="tod-toggle" role="group" aria-label="Momento del día">
+            <button class="tod-btn" id="btn-day" type="button" data-tod="day">Día</button>
+            <button class="tod-btn" id="btn-night" type="button" data-tod="night">Noche</button>
+          </div>
           <div class="menu-actions">
             <button class="btn" id="btn-mute-menu" type="button">Sonido</button>
           </div>
@@ -97,9 +103,17 @@ export class UI {
     this.el.querySelector('#btn-mute').addEventListener('click', () => this.onToggleMute?.())
     this.el.querySelector('#btn-mute-menu').addEventListener('click', () => this.onToggleMute?.())
     this.el.querySelector('#btn-pause').addEventListener('click', () => this.onPause?.())
+    this.el.querySelector('#btn-day').addEventListener('click', () => this.onTimeOfDay?.('day'))
+    this.el.querySelector('#btn-night').addEventListener('click', () => this.onTimeOfDay?.('night'))
 
     this.refreshBestTimes()
     this._detectTouch()
+  }
+
+  setTimeOfDay(mode) {
+    this.timeOfDay = mode === 'day' ? 'day' : 'night'
+    this.el.querySelector('#btn-day').classList.toggle('active', this.timeOfDay === 'day')
+    this.el.querySelector('#btn-night').classList.toggle('active', this.timeOfDay === 'night')
   }
 
   _detectTouch() {

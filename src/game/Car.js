@@ -11,6 +11,7 @@ export class Car {
     this.scene = scene
     this.scannerPhase = 0
     this.speedKmh = 0
+    this._night = true
 
     const mass = 980
     const chassisShape = new CANNON.Box(new CANNON.Vec3(chassisW / 2, chassisH / 2, chassisL / 2))
@@ -18,8 +19,8 @@ export class Car {
     this.chassisBody.addShape(chassisShape)
     this.chassisBody.position.set(spawn.x, spawn.y + 0.7, spawn.z)
     this.chassisBody.quaternion.setFromEuler(0, spawn.yaw || 0, 0)
-    this.chassisBody.angularDamping = 0.35
-    this.chassisBody.linearDamping = 0.05
+    this.chassisBody.angularDamping = 0.42
+    this.chassisBody.linearDamping = 0.035
     world.addBody(this.chassisBody)
 
     this.vehicle = new CANNON.RaycastVehicle({
@@ -79,9 +80,10 @@ export class Car {
       this.wheelMeshes.push(m)
     }
 
-    this.maxSteer = 0.48
-    this.maxForce = 3200
-    this.brakeForce = 48
+    this.maxSteer = 0.52
+    this.maxForce = 3400
+    this.brakeForce = 52
+    this._steerCurrent = 0
   }
 
   _buildMesh() {
@@ -150,10 +152,12 @@ export class Car {
       emissive: 0xffe9a8,
       emissiveIntensity: 1.4,
     })
+    this.headLightMeshes = []
     for (const x of [-0.7, 0.7]) {
-      const hl = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.14, 0.08), lightMat)
+      const hl = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.14, 0.08), lightMat.clone())
       hl.position.set(x, 0.12, 2.3)
       root.add(hl)
+      this.headLightMeshes.push(hl)
     }
 
     // Tail lights
@@ -217,8 +221,12 @@ export class Car {
     const speed = velocity.dot(forward)
     this.speedKmh = Math.abs(speed) * 3.6
 
-    const speedFactor = Math.min(1, this.speedKmh / 140)
-    const steerVal = controls.steer * this.maxSteer * (1 - speedFactor * 0.65)
+    const speedFactor = Math.min(1, this.speedKmh / 150)
+    const targetSteer = controls.steer * this.maxSteer * (1 - speedFactor * 0.7)
+    // Smooth steering for a planted muscle-car feel
+    const steerLerp = Math.min(1, dt * 8)
+    this._steerCurrent += (targetSteer - this._steerCurrent) * steerLerp
+    const steerVal = this._steerCurrent
 
     this.vehicle.setSteeringValue(steerVal, 0)
     this.vehicle.setSteeringValue(steerVal, 1)
@@ -273,13 +281,30 @@ export class Car {
     this.scannerPhase += dt * 3.2
     const sweep = (Math.sin(this.scannerPhase) + 1) / 2 // 0..1
     const center = sweep * 10
+    const glowMul = this._night === false ? 0.18 : 1.15
     for (let i = 0; i < this.scannerLeds.length; i++) {
       const d = Math.abs(i - center)
-      const intensity = Math.max(0.04, 2.4 - d * 1.15)
+      const intensity = Math.max(0.04, 2.4 - d * 1.15) * glowMul
       this.scannerLeds[i].material.emissiveIntensity = intensity
     }
     this.scannerLight.position.x = (sweep - 0.5) * 1.6
-    this.scannerLight.intensity = 1.4 + Math.sin(this.scannerPhase * 2) * 0.3
+    const base = this._night === false ? 0.25 : 1.4
+    this.scannerLight.intensity = base + Math.sin(this.scannerPhase * 2) * 0.2 * glowMul
+  }
+
+  setTimeOfDay(mode) {
+    const night = mode !== 'day'
+    this._night = night
+    const spot = night ? 3.4 : 0.08
+    this.headLightL.intensity = spot
+    this.headLightR.intensity = spot
+    this.headLightL.distance = night ? 70 : 20
+    this.headLightR.distance = night ? 70 : 20
+    for (const m of this.headLightMeshes) {
+      m.material.emissiveIntensity = night ? 2.0 : 0.2
+    }
+    this.scannerLight.intensity = night ? 2.4 : 0.25
+    this.scannerLight.distance = night ? 10 : 4
   }
 
   getPosition() {

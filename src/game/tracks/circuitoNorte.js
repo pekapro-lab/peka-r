@@ -1,7 +1,7 @@
 export const circuitoNorte = {
   id: 'norte',
   name: 'Circuito Norte',
-  description: 'Anillo urbano al anochecer, con tribunas y farolas.',
+  description: 'Anillo urbano con tribunas y farolas.',
   laps: 3,
   roadWidth: 12,
   samplesPerSeg: 12,

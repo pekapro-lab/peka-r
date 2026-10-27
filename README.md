@@ -18,10 +18,12 @@ Juego de carreras 3D en el navegador: conduce un muscle car negro de los 80, lar
 
 ## Circuitos
 
-- **Circuito Norte** — anillo urbano al anochecer
-- **Bosque Rojo** — trazado técnico nocturno entre pinos
+- **Circuito Norte** — anillo urbano con tribunas
+- **Bosque Rojo** — trazado técnico entre pinos
+- **Costa Dorada** — circuito costero abierto entre dunas y mar
+- **Sierra Alta** — montaña técnica con horquillas y rocas
 
-Los mejores tiempos de vuelta se guardan en el navegador (`localStorage`).
+En el menú puedes elegir **Día** o **Noche** (se recuerda en el navegador). Los mejores tiempos de vuelta se guardan por circuito (`localStorage`).
 
 ## Tecnologías
 
