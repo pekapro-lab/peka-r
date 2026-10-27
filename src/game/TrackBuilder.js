@@ -55,14 +55,42 @@ export function buildTrack(world, scene, def) {
   world._pekarBarrierMat = barrierMatPhys
 
   // Ground plane under whole track
+  // One continuous flat ground collider. NOT a CANNON.Plane: with SAPBroadphase the
+  // rotated plane gets a half-infinite AABB (z<=0 only), so every ray at z>0 missed
+  // the ground — the "ghost bump" where wheels lost traction. A huge static box has a
+  // correct AABB and its top face sits exactly at y=0 (no seams, no steps).
+  const gs = (def.groundSize || 420) / 2 + 200
   const groundBody = new CANNON.Body({
     mass: 0,
-    shape: new CANNON.Plane(),
+    shape: new CANNON.Box(new CANNON.Vec3(gs, 1, gs)),
     material: groundPhysMat,
   })
+  groundBody.position.set(0, -1, 0)
   groundBody.collisionFilterGroup = GROUP_GROUND
   groundBody.collisionFilterMask = GROUP_CHASSIS
-  groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0)
+
+  const half = roadWidth / 2
+  const distToPath = (x, z) => {
+    let best = Infinity
+    for (let j = 0; j < path.length; j++) {
+      const p = path[j], q = path[(j + 1) % path.length]
+      const ex = q.x - p.x, ez = q.z - p.z, L = ex * ex + ez * ez || 1
+      const u = Math.max(0, Math.min(1, ((x - p.x) * ex + (z - p.z) * ez) / L))
+      best = Math.min(best, Math.hypot(x - p.x - ex * u, z - p.z - ez * u))
+    }
+    return best
+  }
+  // Barriers must stay outside the road (+0.6 m margin)
+  const barrierIntrudes = (pos, yaw, thick, len) => {
+    const c = Math.cos(yaw), s = Math.sin(yaw)
+    for (const lx of [-thick / 2, thick / 2]) {
+      for (let k = -1; k <= 1.001; k += 0.25) {
+        const lz = (k * len) / 2
+        if (distToPath(pos.x + lx * c + lz * s, pos.z - lx * s + lz * c) < half + 0.6) return true
+      }
+    }
+    return false
+  }
   world.addBody(groundBody)
   bodies.push(groundBody)
 
@@ -86,7 +114,6 @@ export function buildTrack(world, scene, def) {
   group.add(ground)
 
   // Road ribbon
-  const half = roadWidth / 2
   const positions = []
   const normals = []
   const uvs = []
@@ -199,11 +226,14 @@ export function buildTrack(world, scene, def) {
 
     // Visual wall full height; physics is a mid-height rail so the car can't climb/launch over it
     for (const sign of [1, -1]) {
-      const wallLen = len * 1.08
       const wallThick = 0.5
       const wallH = 1.15
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(wallThick, wallH, wallLen), barrierMat)
       const pos = a.clone().addScaledVector(side, sign * (half + 1.3))
+      // On tight inner curves a full-length box pokes into the asphalt (invisible wall).
+      let wallLen = len * 1.08
+      while (wallLen > 0.4 && barrierIntrudes(pos, yaw, wallThick, wallLen)) wallLen *= 0.8
+      if (wallLen <= 0.4) continue
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(wallThick, wallH, wallLen), barrierMat)
       wall.position.set(pos.x, wallH / 2, pos.z)
       wall.rotation.y = yaw
       wall.castShadow = true

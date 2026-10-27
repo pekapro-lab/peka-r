@@ -1,7 +1,7 @@
 {
   "name": "peka-r",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,9 @@
     "build:apk": "VITE_BASE=./ vite build --outDir www && npx cap sync android",
     "cap:sync": "npx cap sync android",
     "cap:open": "npx cap open android",
-    "test:curves": "vite build && node scripts/curve-regression.mjs"
+    "test:curves": "vite build && node scripts/curve-regression.mjs",
+    "test:ground": "vite build && node scripts/ground-scan.mjs",
+    "test:laps": "vite build && node scripts/lap-offsets.mjs"
   },
   "devDependencies": {
     "vite": "^7.1.7"
