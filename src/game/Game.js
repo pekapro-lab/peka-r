@@ -311,7 +311,7 @@ export class Game {
     if (this.state === 'countdown') {
       // keep car still; still step tiny physics for stability
       if (this.world) this.world.step(1 / 90, dt, 6)
-      this.car?.update(dt, { throttle: 0, brake: 1, steer: 0, handbrake: true })
+      this.car?.update(dt, { throttle: 0, brake: 0, steer: 0, handbrake: true })
       this._updateCamera()
       const elapsed = (performance.now() - this._countStartedAt) / 1000
       // 0-1:3, 1-2:2, 2-3:1, 3-3.8:YA, then race
