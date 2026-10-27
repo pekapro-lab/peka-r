@@ -44,11 +44,24 @@ export function buildTrack(world, scene, def) {
   const group = new THREE.Group()
   const bodies = []
 
+  // Collision groups: 1=ground, 2=barrier, 4=chassis. Wheel rays only hit ground.
+  const GROUP_GROUND = 1
+  const GROUP_BARRIER = 2
+  const GROUP_CHASSIS = 4
+
+  const groundPhysMat = world._pekarGroundMat || new CANNON.Material('pekar-ground')
+  const barrierMatPhys = world._pekarBarrierMat || new CANNON.Material('pekar-barrier')
+  world._pekarGroundMat = groundPhysMat
+  world._pekarBarrierMat = barrierMatPhys
+
   // Ground plane under whole track
   const groundBody = new CANNON.Body({
     mass: 0,
     shape: new CANNON.Plane(),
+    material: groundPhysMat,
   })
+  groundBody.collisionFilterGroup = GROUP_GROUND
+  groundBody.collisionFilterMask = GROUP_CHASSIS
   groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0)
   world.addBody(groundBody)
   bodies.push(groundBody)
@@ -184,26 +197,28 @@ export function buildTrack(world, scene, def) {
       group.add(curb)
     }
 
-    // physical + visual barriers every other segment
-    if (i % 2 === 0) {
-      for (const sign of [1, -1]) {
-        const wallLen = len * 1.95
-        const wall = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.1, wallLen), barrierMat)
-        const pos = a.clone().addScaledVector(side, sign * (half + 1.1))
-        wall.position.set(pos.x, 0.55, pos.z)
-        wall.rotation.y = yaw
-        wall.castShadow = true
-        wall.receiveShadow = true
-        group.add(wall)
+    // Continuous barriers (slight overlap) — low friction so the car slides off instead of wedging
+    for (const sign of [1, -1]) {
+      const wallLen = len * 1.08
+      const wallThick = 0.55
+      const wallH = 1.15
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(wallThick, wallH, wallLen), barrierMat)
+      const pos = a.clone().addScaledVector(side, sign * (half + 1.25))
+      wall.position.set(pos.x, wallH / 2, pos.z)
+      wall.rotation.y = yaw
+      wall.castShadow = true
+      wall.receiveShadow = true
+      group.add(wall)
 
-        const shape = new CANNON.Box(new CANNON.Vec3(0.175, 0.55, wallLen / 2))
-        const body = new CANNON.Body({ mass: 0 })
-        body.addShape(shape)
-        body.position.set(pos.x, 0.55, pos.z)
-        body.quaternion.setFromEuler(0, yaw, 0)
-        world.addBody(body)
-        bodies.push(body)
-      }
+      const shape = new CANNON.Box(new CANNON.Vec3(wallThick / 2, wallH / 2, wallLen / 2))
+      const body = new CANNON.Body({ mass: 0, material: barrierMatPhys })
+      body.addShape(shape)
+      body.position.set(pos.x, wallH / 2, pos.z)
+      body.quaternion.setFromEuler(0, yaw, 0)
+      body.collisionFilterGroup = GROUP_BARRIER
+      body.collisionFilterMask = GROUP_CHASSIS
+      world.addBody(body)
+      bodies.push(body)
     }
   }
 
@@ -258,6 +273,7 @@ export function buildTrack(world, scene, def) {
     bodies,
     path: centerline,
     spawn,
+    roadWidth,
     laps: def.laps || 3,
     name: def.name,
     id: def.id,

@@ -358,3 +358,11 @@ canvas.game-canvas {
   .hud-pill { min-width: 72px; padding: 6px 10px; }
   .hud-pill .value { font-size: 1rem; }
 }
+
+.hud-restart { display: none; }
+@media (pointer: coarse) {
+  .hud-restart { display: inline-flex; }
+}
+.icon-btn#btn-recover {
+  font-size: 1.05rem;
+}

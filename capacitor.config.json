@@ -1,0 +1,12 @@
+{
+  "appId": "com.pekapro.pekar",
+  "appName": "Peka-R",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#0a0a0f"
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

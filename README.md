@@ -41,6 +41,20 @@ npm run build
 
 La base de Vite es `/peka-r/` para GitHub Pages.
 
+
+## Instalar en Android
+
+1. Descarga el APK de la [última release](https://github.com/pekapro-lab/peka-r/releases/latest) (`Peka-R-1.0.0.apk`).
+2. En el teléfono: **Ajustes → Seguridad / Instalar aplicaciones desconocidas** → permite la app con la que lo descargaste (Chrome, Files…).
+3. Abre el APK y pulsa **Instalar**. Si Play Protect avisa, elige **Instalar de todas formas** (la app no está en Play Store; está firmada por pekapro-lab).
+4. Abre **Peka-R**. Gira el móvil a horizontal.
+
+Android 7 o superior. No hace falta conexión para jugar (el juego va embebido en el APK).
+
+También puedes jugar en el navegador: https://pekapro-lab.github.io/peka-r/
+
+Para regenerar el APK: `npm run build:apk` y luego `cd android && ./gradlew assembleRelease`, o lanza el workflow **Build Android APK** / publica un tag `v*`.
+
 ## Licencia
 
 Código propio de pekapro-lab. Sin marcas ni nombres de series/películas de terceros.

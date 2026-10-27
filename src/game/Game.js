@@ -118,6 +118,9 @@ export class Game {
     this.ui.onToggleCamera = () => this.input.onToggleCamera()
     this.ui.onToggleMute = () => this.input.onMute()
     this.ui.onPause = () => this.input.onPause()
+    this.ui.onRecover = () => this.recoverCar()
+    this.ui.onRestartRace = () => this.restartRace()
+    this.input.onRecover = () => this.recoverCar()
     this.ui.onTimeOfDay = (mode) => {
       this.timeOfDay = mode === 'day' ? 'day' : 'night'
       localStorage.setItem('peka-r-tod', this.timeOfDay)
@@ -134,24 +137,41 @@ export class Game {
       gravity: new CANNON.Vec3(0, -9.82, 0),
     })
     this.world.broadphase = new CANNON.SAPBroadphase(this.world)
-    this.world.allowSleep = true
-    this.world.defaultContactMaterial.friction = 0.3
-    this.world.defaultContactMaterial.restitution = 0.01
+    this.world.allowSleep = false
+    this.world.defaultContactMaterial.friction = 0.05
+    this.world.defaultContactMaterial.restitution = 0.02
+    this.world.defaultContactMaterial.contactEquationStiffness = 1e7
+    this.world.defaultContactMaterial.contactEquationRelaxation = 3
+    this.world.solver.iterations = 12
 
-    // Wheel-ground contact
-    const groundMaterial = new CANNON.Material('ground')
-    const wheelMaterial = new CANNON.Material('wheel')
-    const contact = new CANNON.ContactMaterial(groundMaterial, wheelMaterial, {
-      friction: 0.55,
+    const groundMaterial = new CANNON.Material('pekar-ground')
+    const barrierMaterial = new CANNON.Material('pekar-barrier')
+    const chassisMaterial = new CANNON.Material('pekar-chassis')
+    this.world._pekarGroundMat = groundMaterial
+    this.world._pekarBarrierMat = barrierMaterial
+    // Barriers: almost no friction so the car slides off instead of wedging
+    this.world.addContactMaterial(new CANNON.ContactMaterial(chassisMaterial, barrierMaterial, {
+      friction: 0.02,
+      restitution: 0.05,
+      contactEquationStiffness: 1e7,
+      contactEquationRelaxation: 3,
+    }))
+    this.world.addContactMaterial(new CANNON.ContactMaterial(chassisMaterial, groundMaterial, {
+      friction: 0.4,
       restitution: 0,
-      contactEquationStiffness: 1000,
-    })
-    this.world.addContactMaterial(contact)
+      contactEquationStiffness: 1e7,
+      contactEquationRelaxation: 3,
+    }))
+    this._trackId = trackId
+    this._stuckTime = 0
+    this._lastMovePos = null
+    this._checkpointIndex = 0
 
     const trackDef = { ...def, timeOfDay: this.timeOfDay }
     this._applyLighting(this.timeOfDay)
     this.track = buildTrack(this.world, this.scene, trackDef)
     this.car = new Car(this.world, this.scene, this.track.spawn)
+    this.car.chassisBody.material = chassisMaterial
     this.car.setTimeOfDay(this.timeOfDay)
     this.totalLaps = this.track.laps
     this.lap = 1
@@ -261,7 +281,7 @@ export class Game {
 
     if (this.state === 'countdown') {
       // keep car still; still step tiny physics for stability
-      if (this.world) this.world.step(1 / 60, dt, 3)
+      if (this.world) this.world.step(1 / 90, dt, 6)
       this.car?.update(dt, { throttle: 0, brake: 1, steer: 0, handbrake: true })
       this._updateCamera()
       const elapsed = (performance.now() - this._countStartedAt) / 1000
@@ -298,8 +318,10 @@ export class Game {
     if (this.state === 'racing' || this.state === 'finished') {
       if (this.state === 'racing') {
         const controls = this.input.getControls()
-        if (this.world) this.world.step(1 / 60, dt, 3)
+        if (this.world) this.world.step(1 / 90, dt, 6)
         this.car.update(dt, controls)
+        this._updateCheckpoint()
+        this._guardPhysics(dt, controls)
         this.audio.setDriving({
           speedKmh: this.car.speedKmh,
           throttle: controls.throttle,
@@ -318,6 +340,114 @@ export class Game {
       }
       this._updateCamera()
       this.renderer.render(this.scene, this.camera)
+    }
+  }
+
+
+  _nearestPathIndex(pos) {
+    const path = this.track.path
+    let bestI = 0
+    let bestD = Infinity
+    for (let i = 0; i < path.length; i++) {
+      const dx = path[i].x - pos.x
+      const dz = path[i].z - pos.z
+      const d = dx * dx + dz * dz
+      if (d < bestD) {
+        bestD = d
+        bestI = i
+      }
+    }
+    return bestI
+  }
+
+  _pathYaw(index) {
+    const path = this.track.path
+    const a = path[index]
+    const b = path[(index + 1) % path.length]
+    return Math.atan2(b.x - a.x, b.z - a.z)
+  }
+
+  _updateCheckpoint() {
+    if (!this.car || !this.track) return
+    const pos = this.car.getPosition()
+    const idx = this._nearestPathIndex(pos)
+    // Only advance checkpoint when roughly on-track and upright
+    const p = this.track.path[idx]
+    const dx = pos.x - p.x
+    const dz = pos.z - p.z
+    const dist = Math.hypot(dx, dz)
+    if (dist < (this.track.roadWidth || 12) * 0.7 && !this.car.isOverturned() && this.car.speedKmh > 5) {
+      this._checkpointIndex = idx
+    }
+  }
+
+  _placeOnPath(index, y = 0.75) {
+    const path = this.track.path
+    const i = ((index % path.length) + path.length) % path.length
+    const p = path[i]
+    const yaw = this._pathYaw(i)
+    this.car.teleport(p.x, y, p.z, yaw)
+  }
+
+  recoverCar() {
+    if (!this.car || !this.track) return
+    if (this.state !== 'racing' && this.state !== 'paused' && this.state !== 'countdown') return
+    const idx = this._checkpointIndex || this._nearestPathIndex(this.car.getPosition())
+    this._placeOnPath(idx)
+    this._stuckTime = 0
+    this._lastMovePos = null
+    // Lap clock keeps running — do not touch lapStart
+  }
+
+  restartRace() {
+    if (!this._trackId) return
+    this.ui.showPause(false)
+    this.ui.setPauseTitle('Pausa')
+    this.ui.hideCountdown()
+    this.startTrack(this._trackId)
+  }
+
+  _guardPhysics(dt, controls) {
+    if (!this.car) return
+    if (this.car.hasBadState() || this.car.isOverturned()) {
+      this.recoverCar()
+      return
+    }
+    const pos = this.car.getPosition()
+    const moved = this._lastMovePos
+      ? Math.hypot(pos.x - this._lastMovePos.x, pos.z - this._lastMovePos.z)
+      : 1
+    if (!this._lastMovePos) this._lastMovePos = { x: pos.x, z: pos.z }
+    else {
+      this._lastMovePos.x = pos.x
+      this._lastMovePos.z = pos.z
+    }
+
+    const trying = controls.throttle > 0 || controls.brake > 0 || Math.abs(controls.steer) > 0.2
+    const nearlyStill = this.car.speedKmh < 4 && moved < 0.4
+    if (trying && nearlyStill) {
+      this._stuckTime += dt
+      // After ~0.7s jammed, gently push toward the track center so reverse/steer can free it
+      if (this._stuckTime > 0.7 && this._stuckTime < 3) {
+        const idx = this._nearestPathIndex(pos)
+        const center = this.track.path[idx]
+        const dx = center.x - pos.x
+        const dz = center.z - pos.z
+        const len = Math.hypot(dx, dz) || 1
+        const push = 4200 * dt
+        this.car.chassisBody.applyForce(
+          new CANNON.Vec3((dx / len) * push, 800 * dt, (dz / len) * push),
+          this.car.chassisBody.position,
+        )
+        // Kill residual spin that wedges the box in barrier seams
+        this.car.chassisBody.angularVelocity.x *= 0.8
+        this.car.chassisBody.angularVelocity.z *= 0.8
+      }
+    } else {
+      this._stuckTime = Math.max(0, this._stuckTime - dt * 0.6)
+    }
+    if (this._stuckTime >= 2.8) {
+      this.recoverCar()
     }
   }
 

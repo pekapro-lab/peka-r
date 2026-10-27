@@ -6,13 +6,22 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:apk": "VITE_BASE=./ vite build --outDir www && npx cap sync android",
+    "cap:sync": "npx cap sync android",
+    "cap:open": "npx cap open android"
   },
   "devDependencies": {
     "vite": "^7.1.7"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/cli": "^7.6.9",
+    "@capacitor/core": "^8.5.3",
     "cannon-es": "^0.20.0",
     "three": "^0.180.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }

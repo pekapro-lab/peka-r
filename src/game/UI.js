@@ -10,6 +10,8 @@ export class UI {
     this.onToggleCamera = null
     this.onToggleMute = null
     this.onPause = null
+    this.onRecover = null
+    this.onRestartRace = null
     this.onTimeOfDay = null
     this.timeOfDay = 'night'
 
@@ -29,8 +31,8 @@ export class UI {
             <button class="btn" id="btn-mute-menu" type="button">Sonido</button>
           </div>
           <p class="help">
-            Teclado: WASD / flechas acelerar y girar · Espacio freno de mano · C cambiar cámara · P o Esc pausa · M silencio<br/>
-            Móvil: controles táctiles en pantalla
+            Teclado: WASD / flechas · Espacio freno de mano · C cámara · R recolocar · P o Esc pausa · M silencio<br/>
+            Móvil: controles táctiles · botón ↺ recoloca · ⟳ reinicia
           </p>
         </div>
       </div>
@@ -53,6 +55,8 @@ export class UI {
         <div class="hud-tools">
           <button class="icon-btn" id="btn-cam" type="button" title="Cámara">C</button>
           <button class="icon-btn" id="btn-mute" type="button" title="Silencio">♪</button>
+          <button class="icon-btn" id="btn-recover" type="button" title="Recolocar (R)">↺</button>
+          <button class="icon-btn hud-restart" id="btn-restart-hud" type="button" title="Reiniciar carrera">⟳</button>
           <button class="icon-btn" id="btn-pause" type="button" title="Pausa">Ⅱ</button>
         </div>
         <div class="speedo">
@@ -69,6 +73,8 @@ export class UI {
           <h2 id="pause-title">Pausa</h2>
           <div class="menu-actions">
             <button class="btn primary" id="btn-resume" type="button">Continuar</button>
+            <button class="btn" id="btn-restart" type="button">Reiniciar carrera</button>
+            <button class="btn" id="btn-recover-pause" type="button">Recolocar</button>
             <button class="btn" id="btn-menu" type="button">Menú principal</button>
           </div>
         </div>
@@ -103,6 +109,14 @@ export class UI {
     this.el.querySelector('#btn-mute').addEventListener('click', () => this.onToggleMute?.())
     this.el.querySelector('#btn-mute-menu').addEventListener('click', () => this.onToggleMute?.())
     this.el.querySelector('#btn-pause').addEventListener('click', () => this.onPause?.())
+    this.el.querySelector('#btn-recover').addEventListener('click', () => this.onRecover?.())
+    this.el.querySelector('#btn-recover-pause').addEventListener('click', () => {
+      this.onRecover?.()
+      this.setPauseTitle('Pausa')
+      this.onResume?.()
+    })
+    this.el.querySelector('#btn-restart').addEventListener('click', () => this.onRestartRace?.())
+    this.el.querySelector('#btn-restart-hud').addEventListener('click', () => this.onRestartRace?.())
     this.el.querySelector('#btn-day').addEventListener('click', () => this.onTimeOfDay?.('day'))
     this.el.querySelector('#btn-night').addEventListener('click', () => this.onTimeOfDay?.('night'))
 
