@@ -215,8 +215,21 @@ canvas.game-canvas {
   border: 1px solid rgba(255, 40, 40, 0.25);
   border-radius: 16px;
   padding: 8px 22px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
-
+.speedo .gear {
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #9dffb0;
+  margin-bottom: 2px;
+}
+.speedo .gear.reverse {
+  color: #ff6b6b;
+  text-shadow: 0 0 10px rgba(255, 40, 40, 0.55);
+}
 .speedo .kmh {
   font-size: clamp(1.8rem, 6vw, 2.4rem);
   font-weight: 700;

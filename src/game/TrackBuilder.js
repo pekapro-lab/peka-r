@@ -197,23 +197,26 @@ export function buildTrack(world, scene, def) {
       group.add(curb)
     }
 
-    // Continuous barriers (slight overlap) — low friction so the car slides off instead of wedging
+    // Visual wall full height; physics is a mid-height rail so the car can't climb/launch over it
     for (const sign of [1, -1]) {
       const wallLen = len * 1.08
-      const wallThick = 0.55
+      const wallThick = 0.5
       const wallH = 1.15
       const wall = new THREE.Mesh(new THREE.BoxGeometry(wallThick, wallH, wallLen), barrierMat)
-      const pos = a.clone().addScaledVector(side, sign * (half + 1.25))
+      const pos = a.clone().addScaledVector(side, sign * (half + 1.3))
       wall.position.set(pos.x, wallH / 2, pos.z)
       wall.rotation.y = yaw
       wall.castShadow = true
       wall.receiveShadow = true
       group.add(wall)
 
-      const shape = new CANNON.Box(new CANNON.Vec3(wallThick / 2, wallH / 2, wallLen / 2))
+      // Physics rail: 0.55 tall, centered at y=0.55 → spans y≈0.275..0.825 (bumper height)
+      const railH = 0.55
+      const railY = 0.55
+      const shape = new CANNON.Box(new CANNON.Vec3(wallThick / 2, railH / 2, wallLen / 2))
       const body = new CANNON.Body({ mass: 0, material: barrierMatPhys })
       body.addShape(shape)
-      body.position.set(pos.x, wallH / 2, pos.z)
+      body.position.set(pos.x, railY, pos.z)
       body.quaternion.setFromEuler(0, yaw, 0)
       body.collisionFilterGroup = GROUP_BARRIER
       body.collisionFilterMask = GROUP_CHASSIS

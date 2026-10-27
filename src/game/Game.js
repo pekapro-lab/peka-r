@@ -151,19 +151,20 @@ export class Game {
     this.world._pekarBarrierMat = barrierMaterial
     // Barriers: almost no friction so the car slides off instead of wedging
     this.world.addContactMaterial(new CANNON.ContactMaterial(chassisMaterial, barrierMaterial, {
-      friction: 0.02,
-      restitution: 0.05,
-      contactEquationStiffness: 1e7,
-      contactEquationRelaxation: 3,
+      friction: 0.0,
+      restitution: 0.0,
+      contactEquationStiffness: 5e6,
+      contactEquationRelaxation: 4,
     }))
     this.world.addContactMaterial(new CANNON.ContactMaterial(chassisMaterial, groundMaterial, {
-      friction: 0.4,
+      friction: 0.02,
       restitution: 0,
       contactEquationStiffness: 1e7,
       contactEquationRelaxation: 3,
     }))
     this._trackId = trackId
     this._stuckTime = 0
+    this._airTime = 0
     this._lastMovePos = null
     this._checkpointIndex = 0
 
@@ -335,6 +336,7 @@ export class Game {
           current: this.currentLapTime,
           best: this.bestLap,
           speed: this.car.speedKmh,
+          gear: this.car.gear,
         })
         this.ui.drawMinimap(this.track.path, this.car.getPosition())
       }
@@ -381,22 +383,38 @@ export class Game {
     }
   }
 
-  _placeOnPath(index, y = 0.75) {
+  _placeOnPath(index, y = 0.72) {
     const path = this.track.path
     const i = ((index % path.length) + path.length) % path.length
     const p = path[i]
     const yaw = this._pathYaw(i)
-    this.car.teleport(p.x, y, p.z, yaw)
+    // Nudge slightly toward the inside of the path so we never respawn intersecting a barrier
+    const j = (i + 1) % path.length
+    const fx = path[j].x - p.x
+    const fz = path[j].z - p.z
+    const fl = Math.hypot(fx, fz) || 1
+    // side = left of forward; keep on centerline (no side offset)
+    this.car.teleport(p.x - (fx / fl) * 0.5, y, p.z - (fz / fl) * 0.5, yaw)
   }
 
   recoverCar() {
     if (!this.car || !this.track) return
     if (this.state !== 'racing' && this.state !== 'paused' && this.state !== 'countdown') return
-    const idx = this._checkpointIndex || this._nearestPathIndex(this.car.getPosition())
-    this._placeOnPath(idx)
+    const idx = Number.isFinite(this._checkpointIndex)
+      ? this._checkpointIndex
+      : this._nearestPathIndex(this.car.getPosition())
+    this._placeOnPath(idx, 0.72)
     this._stuckTime = 0
+    this._airTime = 0
     this._lastMovePos = null
-    // Lap clock keeps running — do not touch lapStart
+    this._recoverGrace = 1.0
+    const body = this.car.chassisBody
+    body.wakeUp()
+    const fwd = new CANNON.Vec3()
+    body.vectorToWorldFrame(new CANNON.Vec3(0, 0, 1), fwd)
+    body.velocity.x = fwd.x * 2
+    body.velocity.y = -1.5
+    body.velocity.z = fwd.z * 2
   }
 
   restartRace() {
@@ -414,6 +432,18 @@ export class Game {
       return
     }
     const pos = this.car.getPosition()
+    const body = this.car.chassisBody
+    const wheels = this.car.wheelsOnGround()
+
+    // Soft catch: lift onto the plane WITHOUT wiping yaw or forward speed.
+    // Snapping quaternion here used to kill momentum at the first curve.
+    if (wheels === 0 && pos.y < 0.45) {
+      body.position.y = 0.75
+      if (body.velocity.y < 0) body.velocity.y = 0
+      body.angularVelocity.x *= 0.5
+      body.angularVelocity.z *= 0.5
+    }
+
     const moved = this._lastMovePos
       ? Math.hypot(pos.x - this._lastMovePos.x, pos.z - this._lastMovePos.z)
       : 1
@@ -423,30 +453,58 @@ export class Game {
       this._lastMovePos.z = pos.z
     }
 
-    const trying = controls.throttle > 0 || controls.brake > 0 || Math.abs(controls.steer) > 0.2
-    const nearlyStill = this.car.speedKmh < 4 && moved < 0.4
-    if (trying && nearlyStill) {
+    if (this._recoverGrace > 0) {
+      this._recoverGrace = Math.max(0, this._recoverGrace - dt)
+      // During grace, gently push the car onto its wheels
+      if (wheels === 0) {
+        body.applyForce(new CANNON.Vec3(0, -9000, 0), body.position)
+      }
+      this._stuckTime = 0
+      this._airTime = 0
+      return
+    }
+
+    const reversing = this.car.gear === 'R'
+    const tryingDrive = controls.throttle > 0 || Math.abs(controls.steer) > 0.2
+    const tryingReverse = controls.brake > 0 && reversing
+    const nearlyStill = this.car.speedKmh < 3 && moved < 0.35
+    // Death state: throttle held but no wheel contact (not reverse)
+    const noTraction = wheels === 0 && controls.throttle > 0 && !reversing
+
+    if (wheels === 0) this._airTime = (this._airTime || 0) + dt
+    else this._airTime = 0
+
+    // Mild downforce while airborne so rays reconnect
+    if (wheels === 0 && pos.y > 0.55 && body.velocity.y > -2) {
+      body.applyForce(new CANNON.Vec3(0, -7000, 0), body.position)
+    }
+
+    // Stuck while trying to move (forward OR reverse) — auto Recolocar for both
+    const stuckTrying = (tryingDrive || tryingReverse) && nearlyStill
+    if (stuckTrying || (noTraction && this.car.speedKmh < 8)) {
       this._stuckTime += dt
-      // After ~0.7s jammed, gently push toward the track center so reverse/steer can free it
-      if (this._stuckTime > 0.7 && this._stuckTime < 3) {
+      if (this._stuckTime > 0.55) {
         const idx = this._nearestPathIndex(pos)
         const center = this.track.path[idx]
         const dx = center.x - pos.x
         const dz = center.z - pos.z
         const len = Math.hypot(dx, dz) || 1
-        const push = 4200 * dt
-        this.car.chassisBody.applyForce(
-          new CANNON.Vec3((dx / len) * push, 800 * dt, (dz / len) * push),
-          this.car.chassisBody.position,
+        if (pos.y < 0.55) body.position.y = 0.75
+        // Pull toward centerline; don't fight forward/reverse engine force with huge Y pops
+        body.applyForce(
+          new CANNON.Vec3((dx / len) * 3500 * dt, 2500 * dt, (dz / len) * 3500 * dt),
+          body.position,
         )
-        // Kill residual spin that wedges the box in barrier seams
-        this.car.chassisBody.angularVelocity.x *= 0.8
-        this.car.chassisBody.angularVelocity.z *= 0.8
+        body.angularVelocity.x *= 0.7
+        body.angularVelocity.z *= 0.7
       }
     } else {
-      this._stuckTime = Math.max(0, this._stuckTime - dt * 0.6)
+      this._stuckTime = Math.max(0, this._stuckTime - dt * 0.8)
     }
-    if (this._stuckTime >= 2.8) {
+
+    // Auto-recover for permanent zero (also covers reverse stuck against a wall)
+    const limit = noTraction ? 1.4 : 2.8
+    if (this._stuckTime >= limit || (this._airTime || 0) > 2.2) {
       this.recoverCar()
     }
   }

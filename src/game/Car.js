@@ -21,13 +21,18 @@ export class Car {
 
     const mass = 980
     // Flat box kept above the ground so wheel rays own the ground contact.
-    const chassisShape = new CANNON.Box(new CANNON.Vec3(chassisW / 2, chassisH / 2, chassisL / 2))
+    // Physics box sits high so it does NOT rest on the ground during normal driving
+    // (that used to sink the car to y≈0.09 and kill wheel rays). It only acts as a
+    // safety net if the car falls through with no wheel contact.
+    // Thin high box: only touches the ground plane after a deep fall (body.y ≲ 0.2).
+    // Normal ride height (~0.65) keeps the box well clear so wheel rays own traction.
+    const chassisShape = new CANNON.Box(new CANNON.Vec3(chassisW / 2, 0.16, chassisL / 2))
     this.chassisBody = new CANNON.Body({ mass })
-    this.chassisBody.addShape(chassisShape, new CANNON.Vec3(0, 0.12, 0))
+    this.chassisBody.addShape(chassisShape, new CANNON.Vec3(0, 0.22, 0))
     this.chassisBody.position.set(spawn.x, spawn.y + 0.75, spawn.z)
     this.chassisBody.quaternion.setFromEuler(0, spawn.yaw || 0, 0)
-    this.chassisBody.angularDamping = 0.48
-    this.chassisBody.linearDamping = 0.04
+    this.chassisBody.angularDamping = 0.62
+    this.chassisBody.linearDamping = 0.06
     this.chassisBody.allowSleep = false
     this.chassisBody.collisionFilterGroup = GROUP_CHASSIS
     this.chassisBody.collisionFilterMask = GROUP_GROUND | GROUP_BARRIER
@@ -47,7 +52,7 @@ export class Car {
       radius: 0.38,
       directionLocal: new CANNON.Vec3(0, -1, 0),
       suspensionStiffness: 42,
-      suspensionRestLength: 0.28,
+      suspensionRestLength: 0.32,
       frictionSlip: 2.6,
       dampingRelaxation: 2.5,
       dampingCompression: 3.8,
@@ -55,7 +60,7 @@ export class Car {
       rollInfluence: 0.1,
       axleLocal: new CANNON.Vec3(-1, 0, 0),
       chassisConnectionPointLocal: new CANNON.Vec3(0, 0, 0),
-      maxSuspensionTravel: 0.26,
+      maxSuspensionTravel: 0.35,
       customSlidingRotationalSpeed: -28,
       useCustomSlidingRotationalSpeed: true,
       // Wheel rays only hit the ground plane — never barriers (prevents sudden stop).
@@ -89,7 +94,7 @@ export class Car {
       this.updateWheelTransformWorld(wheel)
       const chassisBody = this.chassisBody
       let depth = -1
-      const raylen = wheel.suspensionRestLength + wheel.radius
+      const raylen = wheel.suspensionRestLength + wheel.radius + 1.2
       const rayvector = new CANNON.Vec3()
       wheel.directionWorld.scale(raylen, rayvector)
       const source = wheel.chassisConnectionPointWorld
@@ -100,7 +105,7 @@ export class Car {
       const oldState = chassisBody.collisionResponse
       chassisBody.collisionResponse = false
       this.world.raycastClosest(source, target, {
-        skipBackfaces: true,
+        skipBackfaces: false,
         collisionFilterGroup: GROUP_CHASSIS,
         collisionFilterMask: GROUP_GROUND,
       }, raycastResult)
@@ -117,7 +122,7 @@ export class Car {
         if (wheel.suspensionLength < minSuspensionLength) wheel.suspensionLength = minSuspensionLength
         if (wheel.suspensionLength > maxSuspensionLength) {
           wheel.suspensionLength = maxSuspensionLength
-          wheel.raycastResult.reset()
+          // Do NOT reset raycastResult — clearing body/normal kills traction permanently
         }
         const denominator = wheel.raycastResult.hitNormalWorld.dot(wheel.directionWorld)
         const chassis_velocity_at_contactPoint = new CANNON.Vec3()
@@ -132,6 +137,9 @@ export class Car {
           wheel.clippedInvContactDotSuspension = inv
         }
       } else {
+        // CRITICAL: must clear contact — stale isInContact=true made soft-catch
+        // and stuck detection think the car still had traction while it fell.
+        wheel.isInContact = false
         wheel.suspensionLength = wheel.suspensionRestLength
         wheel.suspensionRelativeVelocity = 0.0
         wheel.directionWorld.scale(-1, wheel.raycastResult.hitNormalWorld)
@@ -158,6 +166,8 @@ export class Car {
     this.maxForce = 3600
     this.brakeForce = 52
     this._steerCurrent = 0
+    this.gear = 'D'
+    this.signedSpeedKmh = 0
   }
 
   _buildMesh() {
@@ -283,13 +293,40 @@ export class Car {
   }
 
   update(dt, controls) {
+    this.chassisBody.wakeUp()
+    // Anti-roll / upright: keep the chassis from banking so hard that wheel rays miss the plane
+    const up = new CANNON.Vec3()
+    this.chassisBody.vectorToWorldFrame(new CANNON.Vec3(0, 1, 0), up)
+    if (up.y > 0.15) {
+      const lean = Math.acos(Math.max(-1, Math.min(1, up.y)))
+      if (lean > 0.06) {
+        const axis = new CANNON.Vec3()
+        new CANNON.Vec3(0, 1, 0).cross(up, axis)
+        if (axis.lengthSquared() > 1e-8) {
+          axis.normalize()
+          // Torque pulls roof toward world-up (axis = worldUp × carUp)
+          const strength = lean * 2200
+          this.chassisBody.torque.x -= axis.x * strength
+          this.chassisBody.torque.y -= axis.y * strength
+          this.chassisBody.torque.z -= axis.z * strength
+        }
+      }
+      this.chassisBody.angularVelocity.x *= 0.9
+      this.chassisBody.angularVelocity.z *= 0.9
+    }
     const velocity = this.chassisBody.velocity
     const forward = new CANNON.Vec3()
     this.chassisBody.vectorToWorldFrame(new CANNON.Vec3(0, 0, 1), forward)
-    let speed = velocity.dot(forward)
+    let speed = velocity.dot(forward) // signed: +forward, -reverse
     if (!Number.isFinite(speed)) speed = 0
     this.speedKmh = Math.abs(speed) * 3.6
     if (!Number.isFinite(this.speedKmh)) this.speedKmh = 0
+    this.signedSpeedKmh = speed * 3.6
+    // Soft speed cap ~170 km/h — prevents barrier launches at absurd speeds
+    if (this.speedKmh > 145) {
+      const scale = 145 / this.speedKmh
+      velocity.scale(scale, velocity)
+    }
 
     const speedFactor = Math.min(1, this.speedKmh / 150)
     const targetSteer = controls.steer * this.maxSteer * (1 - speedFactor * 0.65)
@@ -300,22 +337,60 @@ export class Car {
     this.vehicle.setSteeringValue(steerVal, 0)
     this.vehicle.setSteeringValue(steerVal, 1)
 
-    let force = 0
-    if (controls.throttle) force = this.maxForce * (controls.handbrake ? 0.55 : 1)
-
-    this.vehicle.applyEngineForce(-force * (controls.throttle ? 1 : 0), 2)
-    this.vehicle.applyEngineForce(-force * (controls.throttle ? 1 : 0), 3)
-
-    const braking = controls.brake > 0
-    const brakeForce = braking ? this.brakeForce : 0
+    // Clear brakes/engine every frame, then set intentionally
     for (let i = 0; i < 4; i++) {
-      this.vehicle.setBrake(brakeForce, i)
+      this.vehicle.setBrake(0, i)
+      this.vehicle.applyEngineForce(0, i)
     }
 
-    // Stronger reverse so you can always back out of a wall
-    if (braking && this.speedKmh < 12) {
-      this.vehicle.applyEngineForce(2200, 2)
-      this.vehicle.applyEngineForce(2200, 3)
+    // Reverse when stopped (<~2 km/h forward) or already rolling backward
+    const wantReverse = controls.brake > 0 && speed < 0.6
+    const wantBrake = controls.brake > 0 && !wantReverse && speed > 0.3
+    this.gear = wantReverse ? 'R' : 'D'
+
+    if (controls.throttle && !wantReverse) {
+      const force = this.maxForce * (controls.handbrake ? 0.55 : 1)
+      // Negative engine force = forward (indexForwardAxis = 2)
+      this.vehicle.applyEngineForce(-force, 2)
+      this.vehicle.applyEngineForce(-force, 3)
+    }
+
+    if (wantReverse) {
+      // Positive engine force = reverse; no wheel brakes so it can move
+      const rev = 5600
+      this.vehicle.applyEngineForce(rev, 2)
+      this.vehicle.applyEngineForce(rev, 3)
+      this.gear = 'R'
+      // Cap reverse at ~25 km/h
+      if (speed < -7) {
+        this.vehicle.applyEngineForce(0, 2)
+        this.vehicle.applyEngineForce(0, 3)
+      }
+      // Reliable reverse: also set chassis velocity when nearly stopped
+      if (speed > -5) {
+        const back = new CANNON.Vec3()
+        this.chassisBody.vectorToWorldFrame(new CANNON.Vec3(0, 0, -1), back)
+        const target = 5 // m/s ~18 km/h reverse cap
+        const cur = this.chassisBody.velocity.dot(back)
+        if (cur < target) {
+          const add = Math.min(14, target - cur)
+          this.chassisBody.velocity.x += back.x * add * Math.min(1, dt * 4)
+          this.chassisBody.velocity.z += back.z * add * Math.min(1, dt * 4)
+        }
+      }
+    } else if (wantBrake) {
+      for (let i = 0; i < 4; i++) this.vehicle.setBrake(this.brakeForce, i)
+    }
+
+    // Mild launch assist from standstill so a recover never leaves the player at 0
+    if (controls.throttle && !wantReverse && this.speedKmh < 12) {
+      const onGround = this.wheelsOnGround()
+      if (onGround >= 1) {
+        const fwd = new CANNON.Vec3()
+        this.chassisBody.vectorToWorldFrame(new CANNON.Vec3(0, 0, 1), fwd)
+        const boost = (12 - this.speedKmh) * 400
+        this.chassisBody.applyForce(fwd.scale(boost, fwd), this.chassisBody.position)
+      }
     }
 
     if (controls.handbrake) {
@@ -357,7 +432,7 @@ export class Car {
   /** Place the car at a world pose, zeroing velocities. */
   teleport(x, y, z, yaw) {
     const b = this.chassisBody
-    b.velocity.set(0, 0, 0)
+    b.velocity.set(0, -1.2, 0)
     b.angularVelocity.set(0, 0, 0)
     b.force.set(0, 0, 0)
     b.torque.set(0, 0, 0)
@@ -365,9 +440,16 @@ export class Car {
     b.quaternion.setFromEuler(0, yaw || 0, 0)
     b.wakeUp()
     this._steerCurrent = 0
+    this.gear = 'D'
     for (let i = 0; i < 4; i++) {
       this.vehicle.setBrake(0, i)
       this.vehicle.applyEngineForce(0, i)
+      const w = this.vehicle.wheelInfos[i]
+      w.raycastResult.reset()
+      w.isInContact = false
+      w.suspensionForce = 0
+      w.engineForce = 0
+      w.brake = 0
     }
     this.mesh.position.copy(b.position)
     this.mesh.quaternion.copy(b.quaternion)
@@ -379,9 +461,14 @@ export class Car {
     const a = this.chassisBody.angularVelocity
     const vals = [p.x, p.y, p.z, v.x, v.y, v.z, a.x, a.y, a.z]
     if (vals.some((n) => !Number.isFinite(n))) return true
-    if (p.y < -2 || p.y > 40) return true
+    // Sunken into the ground plane (the old stuck-at-first-curve failure)
+    if (p.y < 0.12 || p.y > 40) return true
     if (v.length() > 120) return true
     return false
+  }
+
+  wheelsOnGround() {
+    return this.vehicle.numWheelsOnGround || 0
   }
 
   isOverturned() {

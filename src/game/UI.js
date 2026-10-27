@@ -31,8 +31,8 @@ export class UI {
             <button class="btn" id="btn-mute-menu" type="button">Sonido</button>
           </div>
           <p class="help">
-            Teclado: WASD / flechas · Espacio freno de mano · C cámara · R recolocar · P o Esc pausa · M silencio<br/>
-            Móvil: controles táctiles · botón ↺ recoloca · ⟳ reinicia
+            Teclado: WASD / flechas · S/↓ freno o marcha atrás (parado) · Espacio freno de mano · C cámara · R recolocar · P/Esc pausa<br/>
+            Móvil: ▲ acelera · ▼ frena / marcha atrás · ↺ recoloca · ⟳ reinicia
           </p>
         </div>
       </div>
@@ -60,6 +60,7 @@ export class UI {
           <button class="icon-btn" id="btn-pause" type="button" title="Pausa">Ⅱ</button>
         </div>
         <div class="speedo">
+          <div class="gear" id="hud-gear">D</div>
           <div class="kmh" id="hud-speed">0</div>
           <div class="unit">KM/H</div>
         </div>
@@ -181,11 +182,16 @@ export class UI {
     this.countdown.textContent = ''
   }
 
-  updateHud({ lap, totalLaps, current, best, speed }) {
+  updateHud({ lap, totalLaps, current, best, speed, gear }) {
     this.el.querySelector('#hud-lap').textContent = `${lap}/${totalLaps}`
     this.el.querySelector('#hud-current').textContent = formatTime(current)
     this.el.querySelector('#hud-best').textContent = best ? formatTime(best) : '--:--.--'
     this.el.querySelector('#hud-speed').textContent = String(Math.round(speed || 0))
+    const g = this.el.querySelector('#hud-gear')
+    if (g) {
+      g.textContent = gear === 'R' ? 'R' : 'D'
+      g.classList.toggle('reverse', gear === 'R')
+    }
   }
 
   setCameraLabel(mode) {
