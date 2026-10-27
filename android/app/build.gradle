@@ -13,8 +13,8 @@ android {
         applicationId "com.pekapro.pekar"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 3
-        versionName "1.0.2"
+        versionCode 4
+        versionName "1.0.3"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -22,24 +22,33 @@ android {
     }
     signingConfigs {
         release {
-            if (keystorePropertiesFile.exists()) {
-                storeFile rootProject.file(keystoreProperties['storeFile'])
-                storePassword keystoreProperties['storePassword']
-                keyAlias keystoreProperties['keyAlias']
-                keyPassword keystoreProperties['keyPassword']
+            // ONE persistent release key. Local: android/keystore.properties (gitignored).
+            // CI: env vars from GitHub Actions secrets. Never falls back to the debug key.
+            def ksFile = System.getenv("PEKAR_KEYSTORE_FILE") ?: (keystorePropertiesFile.exists() ? rootProject.file(keystoreProperties['storeFile']).path : null)
+            if (ksFile) {
+                storeFile file(ksFile)
+                storePassword System.getenv("PEKAR_KEYSTORE_PASSWORD") ?: keystoreProperties['storePassword']
+                keyAlias System.getenv("PEKAR_KEY_ALIAS") ?: keystoreProperties['keyAlias']
+                keyPassword System.getenv("PEKAR_KEY_PASSWORD") ?: keystoreProperties['keyPassword']
             }
+            enableV1Signing true
+            enableV2Signing true
+            enableV3Signing true
         }
     }
     buildTypes {
         release {
             minifyEnabled false
+            zipAlignEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            if (keystorePropertiesFile.exists()) {
-                signingConfig signingConfigs.release
-            } else {
-                signingConfig signingConfigs.debug
-            }
+            signingConfig signingConfigs.release
         }
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.name.contains("Release") } && !android.signingConfigs.release.storeFile) {
+        throw new GradleException("Release signing key missing: set PEKAR_KEYSTORE_FILE (CI) or android/keystore.properties (local). Refusing to ship a debug-signed APK.")
     }
 }
 

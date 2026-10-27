@@ -34,7 +34,7 @@ for (const [id, off] of runs) results.push(await (async () => {
     const force = { throttle: 1, brake: 0, steer: 0, handbrake: false }
     g.input.getControls = () => force
     const path = g.track.path, N = path.length, half = (g.track.roadWidth || 12) / 2
-    let ghost = 0, worstGhost = 0, backOut = 0, reversed = 0, progress = 0, lastI = 0, still = 0, worstStill = 0, recovers = 0
+    let maxLat = 0, ghost = 0, worstGhost = 0, backOut = 0, reversed = 0, progress = 0, lastI = 0, still = 0, worstStill = 0, recovers = 0
     const stalls = []
     const origRec = g.recoverCar.bind(g); g.recoverCar = () => {
       recovers++
@@ -72,13 +72,14 @@ for (const [id, off] of runs) results.push(await (async () => {
       else if (still > 0.8) { backOut = 1.2; still = 0 }
       const touchingWall = g.world.contacts.some((c) => (c.bi === g.car.chassisBody && c.bj.collisionFilterGroup === 2) || (c.bj === g.car.chassisBody && c.bi.collisionFilterGroup === 2))
       if (g.car.speedKmh < 2 && force.throttle && !touchingWall && simT > 2) { ghost += dt; worstGhost = Math.max(worstGhost, ghost) } else ghost = 0
+      maxLat = Math.max(maxLat, Math.sqrt(bd))
       if (g.car.speedKmh < 2) { still += dt; worstStill = Math.max(worstStill, still) } else still = 0
     }
     const st = { y: +g.car.getPosition().y.toFixed(2), w: g.car.wheelsOnGround(), i: lastI, x: +g.car.getPosition().x.toFixed(1), z: +g.car.getPosition().z.toFixed(1) }
-    return { worstGhost: +worstGhost.toFixed(2), reversed, stalls, id, off, lap: progress >= N, secs: Math.round(simT), worstStill: +worstStill.toFixed(2), recovers }
+    return { maxLat: +maxLat.toFixed(1), escaped: maxLat > half + 1.5, worstGhost: +worstGhost.toFixed(2), reversed, stalls, id, off, lap: progress >= N, secs: Math.round(simT), worstStill: +worstStill.toFixed(2), recovers }
   }, [id, off]).finally(() => page.close())
 })())
 for (const r of results) console.log(JSON.stringify(r))
-const bad = results.filter((r) => !r.lap || r.worstGhost > 1.0 || r.recovers > 0)
+const bad = results.filter((r) => !r.lap || r.worstGhost > 1.0 || r.escaped || r.recovers > 0)
 await browser.close(); server?.close()
 console.log(bad.length ? 'LAP OFFSETS FAILED' : 'LAP OFFSETS PASSED'); if (bad.length) process.exitCode = 1

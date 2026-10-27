@@ -224,14 +224,31 @@ export function buildTrack(world, scene, def) {
       group.add(curb)
     }
 
-    // Visual wall full height; physics is a mid-height rail so the car can't climb/launch over it
-    for (const sign of [1, -1]) {
-      const wallThick = 0.5
-      const wallH = 1.15
-      const pos = a.clone().addScaledVector(side, sign * (half + 1.3))
-      // On tight inner curves a full-length box pokes into the asphalt (invisible wall).
-      let wallLen = len * 1.08
-      while (wallLen > 0.4 && barrierIntrudes(pos, yaw, wallThick, wallLen)) wallLen *= 0.8
+  }
+
+  // Barriers: continuous chains along each offset edge. Each piece spans offset point i→i+1
+  // (+overlap), so the OUTSIDE of curves (longer arc) has no gaps. Pieces that would poke
+  // into the road (tight inner curves / hairpins) are shortened or dropped.
+  const wallThick = 0.5
+  const wallH = 1.15
+  const wallOff = half + 1.3
+  const N = path.length
+  for (const sign of [1, -1]) {
+    const offs = []
+    for (let i = 0; i < N; i++) {
+      const prev = path[(i - 1 + N) % N], next = path[(i + 1) % N]
+      const d = new THREE.Vector3().subVectors(next, prev).setY(0).normalize()
+      offs.push(path[i].clone().addScaledVector(new THREE.Vector3(-d.z, 0, d.x), sign * wallOff))
+    }
+    for (let i = 0; i < N; i++) {
+      const p0 = offs[i], p1 = offs[(i + 1) % N]
+      const seg = new THREE.Vector3().subVectors(p1, p0).setY(0)
+      const segLen = seg.length()
+      if (segLen < 0.05) continue
+      const yaw = Math.atan2(seg.x, seg.z)
+      const pos = p0.clone().addScaledVector(seg, 0.5)
+      let wallLen = segLen + 0.7 // overlap → no seams/gaps
+      while (wallLen > 0.4 && barrierIntrudes(pos, yaw, wallThick, wallLen)) wallLen *= 0.85
       if (wallLen <= 0.4) continue
       const wall = new THREE.Mesh(new THREE.BoxGeometry(wallThick, wallH, wallLen), barrierMat)
       wall.position.set(pos.x, wallH / 2, pos.z)
@@ -239,14 +256,10 @@ export function buildTrack(world, scene, def) {
       wall.castShadow = true
       wall.receiveShadow = true
       group.add(wall)
-
-      // Physics rail: 0.55 tall, centered at y=0.55 → spans y≈0.275..0.825 (bumper height)
-      const railH = 0.55
-      const railY = 0.55
-      const shape = new CANNON.Box(new CANNON.Vec3(wallThick / 2, railH / 2, wallLen / 2))
+      // Physics rail at bumper height (y≈0.275..0.825)
       const body = new CANNON.Body({ mass: 0, material: barrierMatPhys })
-      body.addShape(shape)
-      body.position.set(pos.x, railY, pos.z)
+      body.addShape(new CANNON.Box(new CANNON.Vec3(wallThick / 2, 0.55 / 2, wallLen / 2)))
+      body.position.set(pos.x, 0.55, pos.z)
       body.quaternion.setFromEuler(0, yaw, 0)
       body.collisionFilterGroup = GROUP_BARRIER
       body.collisionFilterMask = GROUP_CHASSIS
@@ -277,6 +290,8 @@ export function buildTrack(world, scene, def) {
     group.add(post)
   }
 
+  for (const c of group.children) c.userData.road = true
+  const sceneryStart = group.children.length
   // Scenery depending on theme
   const isNight = def.timeOfDay !== 'day'
   if (def.theme === 'night-city') {
@@ -290,6 +305,19 @@ export function buildTrack(world, scene, def) {
     addPines(group, path, half, isDay ? 0x2d7a42 : 0x1a3d28)
     addHills(group, def, isDay)
   }
+
+  const corridor = half + 1.0 // road + curbs, inside the walls
+  const sceneryCheck = () => findSceneryIntrusions(group, distToPath, corridor)
+  // Sink scenery that pokes above the road corridor; drop it if it can't be cleared.
+  const sceneryFixed = { removed: 0, sunk: 0 }
+  for (const m of sceneryCheck()) {
+    const sz = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3())
+    if (Math.max(sz.x, sz.z) < 10) { m.parent?.remove(m); sceneryFixed.removed++; continue } // trees, rocks, posts
+    let tries = 0
+    while (tries++ < 60 && meshIntrudes(m, distToPath, corridor)) m.position.y -= 0.5
+    if (meshIntrudes(m, distToPath, corridor)) { m.parent?.remove(m); sceneryFixed.removed++ } else sceneryFixed.sunk++
+  }
+  void sceneryStart
 
   scene.add(group)
 
@@ -311,6 +339,8 @@ export function buildTrack(world, scene, def) {
     name: def.name,
     id: def.id,
     lighting: def.lighting,
+    sceneryCheck,
+    sceneryFixed,
     dispose() {
       scene.remove(group)
       for (const b of bodies) world.removeBody(b)
@@ -589,4 +619,31 @@ function addHills(group, def, isDay = false) {
     hill.scale.y = 0.35
     group.add(hill)
   }
+}
+
+const _ray = new THREE.Raycaster()
+const _down = new THREE.Vector3(0, -1, 0)
+/** True if any part of mesh is above y=0 inside the road corridor. */
+function meshIntrudes(mesh, distToPath, corridor) {
+  mesh.updateWorldMatrix(true, true)
+  const box = new THREE.Box3().setFromObject(mesh)
+  if (box.isEmpty() || box.max.y <= 0) return false
+  const step = Math.max(0.5, Math.min(1.5, (box.max.x - box.min.x) / 20))
+  for (let x = box.min.x; x <= box.max.x + 1e-6; x += step) {
+    for (let z = box.min.z; z <= box.max.z + 1e-6; z += step) {
+      if (distToPath(x, z) > corridor) continue
+      _ray.set(new THREE.Vector3(x, box.max.y + 1, z), _down)
+      const hit = _ray.intersectObject(mesh, true)
+      if (hit.length && hit[0].point.y > 0) return true
+    }
+  }
+  return false
+}
+export function findSceneryIntrusions(group, distToPath, corridor) {
+  const out = []
+  for (const c of group.children) {
+    if (c.userData.road) continue
+    if (meshIntrudes(c, distToPath, corridor)) out.push(c)
+  }
+  return out
 }

@@ -9,3 +9,8 @@ android/local.properties
 dist
 node_modules
 www/
+
+# Signing secrets (kept in GitHub Actions secrets + /workspace/secure)
+android/keystore.properties
+*.jks
+*.keystore

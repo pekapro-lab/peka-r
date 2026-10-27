@@ -82,8 +82,7 @@ export class UI {
       </div>
 
       <div class="touch hidden" id="touch">
-        <button class="touch-btn left" data-act="left" type="button">◀</button>
-        <button class="touch-btn right" data-act="right" type="button">▶</button>
+        <div class="stick" id="stick" aria-label="Dirección"><div class="stick-knob" id="stick-knob"></div></div>
         <button class="touch-btn accel" data-act="throttle" type="button">▲</button>
         <button class="touch-btn brake" data-act="brake" type="button">▼</button>
         <button class="touch-btn handbrake" data-act="handbrake" type="button">FRENO DE MANO</button>
@@ -134,6 +133,7 @@ export class UI {
   _detectTouch() {
     const coarse = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window
     this._touchDevice = coarse
+    if (coarse) document.body.classList.add("touch-device")
   }
 
   refreshBestTimes() {
@@ -253,11 +253,6 @@ export class UI {
       if (act === 'throttle') input.touch.throttle = on ? 1 : 0
       if (act === 'brake') input.touch.brake = on ? 1 : 0
       if (act === 'handbrake') input.touch.handbrake = on
-      if (act === 'left' || act === 'right') {
-        const left = this.touch.querySelector('[data-act="left"]').classList.contains('active')
-        const right = this.touch.querySelector('[data-act="right"]').classList.contains('active')
-        input.setTouchSteer(left, right)
-      }
     }
 
     for (const btn of this.touch.querySelectorAll('.touch-btn')) {
@@ -277,5 +272,38 @@ export class UI {
       btn.addEventListener('pointercancel', up)
       btn.addEventListener('pointerleave', up)
     }
+
+    // Analog steering stick (left thumb): horizontal displacement → proportional steer.
+    const stick = this.touch.querySelector('#stick')
+    const knob = this.touch.querySelector('#stick-knob')
+    let pid = null
+    const move = (e) => {
+      const r = stick.getBoundingClientRect()
+      const radius = r.width / 2
+      let dx = e.clientX - (r.left + radius)
+      dx = Math.max(-radius, Math.min(radius, dx))
+      knob.style.transform = `translate(${dx}px, 0)`
+      let v = dx / radius
+      const dead = 0.08
+      v = Math.abs(v) < dead ? 0 : Math.sign(v) * ((Math.abs(v) - dead) / (1 - dead))
+      input.setTouchSteerAnalog(-v) // steer +1 = left
+    }
+    const end = (e) => {
+      if (e.pointerId !== pid) return
+      pid = null
+      stick.classList.remove('active')
+      knob.style.transform = 'translate(0, 0)'
+      input.setTouchSteerAnalog(0)
+    }
+    stick.addEventListener('pointerdown', (e) => {
+      e.preventDefault()
+      pid = e.pointerId
+      stick.setPointerCapture?.(e.pointerId)
+      stick.classList.add('active')
+      move(e)
+    })
+    stick.addEventListener('pointermove', (e) => { if (e.pointerId === pid) { e.preventDefault(); move(e) } })
+    stick.addEventListener('pointerup', end)
+    stick.addEventListener('pointercancel', end)
   }
 }

@@ -46,6 +46,11 @@ export class Input {
     this._steerRight = right
   }
 
+  /** Analog steer from the virtual stick, -1..1 (+1 = left). */
+  setTouchSteerAnalog(v) {
+    this.touch.steer = Math.max(-1, Math.min(1, v || 0))
+  }
+
   getControls() {
     const k = this.keys
     let throttle = 0
@@ -63,6 +68,7 @@ export class Input {
     brake = Math.max(brake, this.touch.brake)
     if (this._steerLeft) steer += 1
     if (this._steerRight) steer -= 1
+    steer += this.touch.steer || 0
     if (this.touch.handbrake) handbrake = true
 
     steer = Math.max(-1, Math.min(1, steer))

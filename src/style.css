@@ -310,8 +310,38 @@ canvas.game-canvas {
 
 .touch .accel { right: max(18px, env(safe-area-inset-right)); bottom: max(110px, calc(env(safe-area-inset-bottom) + 96px)); }
 .touch .brake { right: max(18px, env(safe-area-inset-right)); bottom: max(36px, env(safe-area-inset-bottom)); }
-.touch .left { left: max(18px, env(safe-area-inset-left)); bottom: max(70px, calc(env(safe-area-inset-bottom) + 56px)); }
-.touch .right { left: max(96px, calc(env(safe-area-inset-left) + 78px)); bottom: max(70px, calc(env(safe-area-inset-bottom) + 56px)); }
+.stick {
+  pointer-events: auto;
+  touch-action: none;
+  position: absolute;
+  left: max(18px, env(safe-area-inset-left));
+  bottom: max(36px, env(safe-area-inset-bottom));
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: radial-gradient(circle, rgba(255,255,255,0.06), rgba(10, 12, 18, 0.45) 70%);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+.stick::before, .stick::after {
+  content: ''; position: absolute; top: 50%; width: 0; height: 0; margin-top: -7px;
+  border: 7px solid transparent;
+}
+.stick::before { left: 10px; border-right-color: rgba(255,255,255,0.35); }
+.stick::after { right: 10px; border-left-color: rgba(255,255,255,0.35); }
+.stick.active { border-color: var(--red); }
+.stick-knob {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  pointer-events: none;
+}
+.stick.active .stick-knob { background: rgba(255, 40, 40, 0.45); border-color: var(--red); }
+.touch-device .minimap { bottom: max(200px, calc(env(safe-area-inset-bottom) + 196px)); }
 .touch .handbrake {
   left: 50%;
   transform: translateX(-50%);
@@ -378,4 +408,13 @@ canvas.game-canvas {
 }
 .icon-btn#btn-recover {
   font-size: 1.05rem;
+}
+
+/* Short landscape phones: tool buttons in a top row so they never sit under ▲/▼ */
+@media (max-height: 500px) and (orientation: landscape) {
+  .hud-tools {
+    flex-direction: row;
+    top: max(14px, env(safe-area-inset-top));
+    right: max(150px, calc(env(safe-area-inset-right) + 136px));
+  }
 }

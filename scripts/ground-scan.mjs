@@ -81,10 +81,29 @@ for (const id of ['norte', 'bosque', 'costa', 'sierra']) {
       }
     }
     intrusions.push(...boxHits.slice(0, 6)); const boxCount = boxHits.length
-    return { id, boxCount, samples, misses, maxStep: +maxStep.toFixed(3), intrusions: intrusions.filter(Boolean) }
+    // Scenery meshes above road level inside the corridor
+    const scenery = g.track.sceneryCheck().length
+    // Barrier continuity: every point on each wall line must be covered by a wall box,
+    // except where the wall line itself would be inside the road (hairpin inner side).
+    const walls = world.bodies.filter((b) => b.collisionFilterGroup === 2)
+    let gaps = 0, gapSample = []
+    for (let i = 0; i < path.length; i++) for (let s = 0; s < 2; s++) {
+      const a = path[i], b = path[(i + 1) % path.length]
+      const t = s / 2, dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1
+      for (const sg of [1, -1]) {
+        const x = a.x + dx * t + (-dz / l) * sg * (half + 1.3), z = a.z + dz * t + (dx / l) * sg * (half + 1.3)
+        if (distToPath(x, z) < half + 1.0) continue
+        const covered = walls.some((w) => {
+          const loc = w.pointToLocalFrame(new Vec3(x, w.position.y, z)), h = w.shapes[0].halfExtents
+          return Math.abs(loc.x) <= h.x + 0.6 && Math.abs(loc.z) <= h.z + 0.05
+        })
+        if (!covered) { gaps++; if (gapSample.length < 4) gapSample.push({ i, sg, x: +x.toFixed(1), z: +z.toFixed(1) }) }
+      }
+    }
+    return { id, fixed: g.track.sceneryFixed, scenery, gaps, gapSample, boxCount, samples, misses, maxStep: +maxStep.toFixed(3), intrusions: intrusions.filter(Boolean) }
   }, id)
   console.log(JSON.stringify(r))
-  if (r.misses || r.maxStep > 0.03 || r.intrusions.length) fail = true
+  if (r.misses || r.maxStep > 0.03 || r.intrusions.length || r.scenery || r.gaps) fail = true
 }
 await browser.close(); server.close()
 console.log(fail ? 'GROUND SCAN FAILED' : 'GROUND SCAN PASSED'); if (fail) process.exitCode = 1
