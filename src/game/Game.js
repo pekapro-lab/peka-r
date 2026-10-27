@@ -433,6 +433,7 @@ export class Game {
     }
     const pos = this.car.getPosition()
     const body = this.car.chassisBody
+    this._containCar(body)
     const wheels = this.car.wheelsOnGround()
 
     // Soft catch: lift onto the plane WITHOUT wiping yaw or forward speed.
@@ -506,6 +507,46 @@ export class Game {
     const limit = noTraction ? 1.4 : 2.8
     if (this._stuckTime >= limit || (this._airTime || 0) > 2.2) {
       this.recoverCar()
+    }
+  }
+
+  /**
+   * Hard safety net for the walled corridor. The walls' inner face sits at half + 1.05 m and
+   * the corridor is fully enclosed, so the chassis centre can never legitimately be further
+   * than that from the centreline. If a violent hit (low FPS, wall-corner launch) ever pushes
+   * it past half + 1.4 m, put it back just inside and drop the outward/upward velocity.
+   * Does not touch engine force, top speed or audio.
+   */
+  _containCar(body) {
+    const path = this.track?.path
+    if (!path || !Number.isFinite(body.position.x)) return
+    const N = path.length
+    const half = (this.track.roadWidth || 12) / 2
+    const px = body.position.x, pz = body.position.z
+    let best = Infinity, cx = 0, cz = 0
+    for (let j = 0; j < N; j++) {
+      const p = path[j], q = path[(j + 1) % N]
+      const ex = q.x - p.x, ez = q.z - p.z, L = ex * ex + ez * ez || 1
+      const u = Math.max(0, Math.min(1, ((px - p.x) * ex + (pz - p.z) * ez) / L))
+      const x = p.x + ex * u, z = p.z + ez * u
+      const d = (px - x) ** 2 + (pz - z) ** 2
+      if (d < best) { best = d; cx = x; cz = z }
+    }
+    const d = Math.sqrt(best)
+    const limit = half + 1.4
+    if (d <= limit && body.position.y < 2.2) return
+    const nx = (px - cx) / (d || 1), nz = (pz - cz) / (d || 1)
+    if (d > limit) {
+      const back = half + 0.4
+      body.position.x = cx + nx * back
+      body.position.z = cz + nz * back
+      const vOut = body.velocity.x * nx + body.velocity.z * nz
+      if (vOut > 0) { body.velocity.x -= nx * vOut; body.velocity.z -= nz * vOut }
+    }
+    if (body.position.y > 1.2) {
+      // Launched off a wall corner: bring it back down onto the road
+      body.position.y = Math.min(body.position.y, 1.2)
+      if (body.velocity.y > 0) body.velocity.y = 0
     }
   }
 

@@ -100,10 +100,50 @@ for (const id of ['norte', 'bosque', 'costa', 'sierra']) {
         if (!covered) { gaps++; if (gapSample.length < 4) gapSample.push({ i, sg, x: +x.toFixed(1), z: +z.toFixed(1) }) }
       }
     }
-    return { id, fixed: g.track.sceneryFixed, scenery, gaps, gapSample, boxCount, samples, misses, maxStep: +maxStep.toFixed(3), intrusions: intrusions.filter(Boolean) }
+    // Wall height: every barrier collider must reach the ground and stand >= 2 m tall, or the
+    // chassis (bottom ~0.66 m) rides up and over it (v1.0.3 escape: rail was 0.275..0.825 m).
+    let lowWalls = 0
+    for (const w of walls) { const hy = w.shapes[0].halfExtents.y; if (w.position.y - hy > 0.05 || w.position.y + hy < 2.0) lowWalls++ }
+    // Enclosure: flood-fill the plane (0.1 m grid) from the start line; walls block. Nothing
+    // reachable may be further than the walls' inner face (half + 1.05 m) + 0.1 m, inner or outer side.
+    const res = 0.1
+    let minx = 1e9, maxx = -1e9, minz = 1e9, maxz = -1e9
+    for (const p of path) { minx = Math.min(minx, p.x); maxx = Math.max(maxx, p.x); minz = Math.min(minz, p.z); maxz = Math.max(maxz, p.z) }
+    minx -= 12; minz -= 12; maxx += 12; maxz += 12
+    const GW = Math.ceil((maxx - minx) / res), GH = Math.ceil((maxz - minz) / res)
+    const dist = new Float32Array(GW * GH).fill(99), block = new Uint8Array(GW * GH)
+    for (let j = 0; j < path.length; j++) {
+      const p = path[j], q = path[(j + 1) % path.length], ex = q.x - p.x, ez = q.z - p.z, L = ex * ex + ez * ez || 1, R = half + 6
+      const x0 = Math.max(0, Math.floor((Math.min(p.x, q.x) - R - minx) / res)), x1 = Math.min(GW - 1, Math.ceil((Math.max(p.x, q.x) + R - minx) / res))
+      const z0 = Math.max(0, Math.floor((Math.min(p.z, q.z) - R - minz) / res)), z1 = Math.min(GH - 1, Math.ceil((Math.max(p.z, q.z) + R - minz) / res))
+      for (let gz = z0; gz <= z1; gz++) for (let gx = x0; gx <= x1; gx++) {
+        const x = minx + gx * res, z = minz + gz * res, u = Math.max(0, Math.min(1, ((x - p.x) * ex + (z - p.z) * ez) / L))
+        const d = Math.hypot(x - p.x - ex * u, z - p.z - ez * u), k = gz * GW + gx; if (d < dist[k]) dist[k] = d
+      }
+    }
+    for (const w of walls) {
+      const h = w.shapes[0].halfExtents, R = Math.hypot(h.x, h.z)
+      const x0 = Math.max(0, Math.floor((w.position.x - R - minx) / res)), x1 = Math.min(GW - 1, Math.ceil((w.position.x + R - minx) / res))
+      const z0 = Math.max(0, Math.floor((w.position.z - R - minz) / res)), z1 = Math.min(GH - 1, Math.ceil((w.position.z + R - minz) / res))
+      for (let gz = z0; gz <= z1; gz++) for (let gx = x0; gx <= x1; gx++) {
+        const loc = w.pointToLocalFrame(new Vec3(minx + gx * res, w.position.y, minz + gz * res))
+        if (Math.abs(loc.x) <= h.x && Math.abs(loc.z) <= h.z) block[gz * GW + gx] = 1
+      }
+    }
+    const seen = new Uint8Array(GW * GH), stack = [Math.round((path[0].x - minx) / res) + Math.round((path[0].z - minz) / res) * GW]
+    seen[stack[0]] = 1
+    let maxReach = 0, leak = null
+    while (stack.length) {
+      const k = stack.pop()
+      if (dist[k] > maxReach) maxReach = dist[k]
+      if (dist[k] > half + 3) { leak = leak || { x: +(minx + (k % GW) * res).toFixed(1), z: +(minz + Math.floor(k / GW) * res).toFixed(1) }; continue }
+      for (const n of [k + 1, k - 1, k + GW, k - GW]) if (n >= 0 && n < GW * GH && !seen[n] && !block[n]) { seen[n] = 1; stack.push(n) }
+    }
+    const reach = +(maxReach - half).toFixed(2)
+    return { id, lowWalls, reach, leak, fixed: g.track.sceneryFixed, scenery, gaps, gapSample, boxCount, samples, misses, maxStep: +maxStep.toFixed(3), intrusions: intrusions.filter(Boolean) }
   }, id)
   console.log(JSON.stringify(r))
-  if (r.misses || r.maxStep > 0.03 || r.intrusions.length || r.scenery || r.gaps) fail = true
+  if (r.lowWalls || r.leak || r.reach > 1.15 || r.misses || r.maxStep > 0.03 || r.intrusions.length || r.scenery || r.gaps) fail = true
 }
 await browser.close(); server.close()
 console.log(fail ? 'GROUND SCAN FAILED' : 'GROUND SCAN PASSED'); if (fail) process.exitCode = 1

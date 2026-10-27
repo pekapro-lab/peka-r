@@ -1,7 +1,7 @@
 {
   "name": "peka-r",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,9 +12,10 @@
     "cap:open": "npx cap open android",
     "test:curves": "vite build && node scripts/curve-regression.mjs",
     "test:ground": "vite build && node scripts/ground-scan.mjs",
-    "test:laps": "vite build && node scripts/lap-offsets.mjs",
+    "test:laps": "vite build && node scripts/lap-offsets.mjs && node scripts/corridor-escape.mjs",
+    "test:escape": "vite build && node scripts/corridor-escape.mjs",
     "test:stick": "vite build && node scripts/stick-check.mjs",
-    "test:all": "vite build && node scripts/ground-scan.mjs && node scripts/curve-regression.mjs && node scripts/lap-offsets.mjs && node scripts/stick-check.mjs"
+    "test:all": "vite build && node scripts/ground-scan.mjs && node scripts/curve-regression.mjs && node scripts/lap-offsets.mjs && node scripts/corridor-escape.mjs && node scripts/stick-check.mjs"
   },
   "devDependencies": {
     "vite": "^7.1.7"

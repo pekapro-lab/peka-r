@@ -230,6 +230,7 @@ export function buildTrack(world, scene, def) {
   // (+overlap), so the OUTSIDE of curves (longer arc) has no gaps. Pieces that would poke
   // into the road (tight inner curves / hairpins) are shortened or dropped.
   const wallThick = 0.5
+  const wallThickCol = 1.6
   const wallH = 1.15
   const wallOff = half + 1.3
   const N = path.length
@@ -256,10 +257,18 @@ export function buildTrack(world, scene, def) {
       wall.castShadow = true
       wall.receiveShadow = true
       group.add(wall)
-      // Physics rail at bumper height (y≈0.275..0.825)
+      // Physics wall: full height from the ground (0..colH) so the chassis can never ride up
+      // and over it (the old 0.275..0.825 m rail was climbable at any speed), and thicker,
+      // grown OUTWARD only (inner face stays exactly where the visual wall is, never in the
+      // road), so a fast hit at a low frame rate cannot tunnel through it.
+      const colH = 2.4
+      const nx = (-seg.z / segLen) * sign, nz = (seg.x / segLen) * sign // outward normal
+      let colThick = wallThickCol
+      let cpos = pos.clone().addScaledVector(new THREE.Vector3(nx, 0, nz), (colThick - wallThick) / 2)
+      if (barrierIntrudes(cpos, yaw, colThick, wallLen)) { colThick = wallThick; cpos = pos }
       const body = new CANNON.Body({ mass: 0, material: barrierMatPhys })
-      body.addShape(new CANNON.Box(new CANNON.Vec3(wallThick / 2, 0.55 / 2, wallLen / 2)))
-      body.position.set(pos.x, 0.55, pos.z)
+      body.addShape(new CANNON.Box(new CANNON.Vec3(colThick / 2, colH / 2, wallLen / 2)))
+      body.position.set(cpos.x, colH / 2, cpos.z)
       body.quaternion.setFromEuler(0, yaw, 0)
       body.collisionFilterGroup = GROUP_BARRIER
       body.collisionFilterMask = GROUP_CHASSIS
