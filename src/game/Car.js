@@ -1,5 +1,115 @@
 import * as THREE from 'three'
 import * as CANNON from 'cannon-es'
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
+
+function canvasTex(w, h, draw, repeat = 1) {
+  const c = document.createElement('canvas')
+  c.width = w; c.height = h
+  draw(c.getContext('2d'), w, h)
+  const t = new THREE.CanvasTexture(c)
+  t.wrapS = t.wrapT = THREE.RepeatWrapping
+  t.repeat.set(repeat, repeat)
+  t.anisotropy = 4
+  return t
+}
+let _carTex = null
+/** Procedural textures (canvas, no assets): metallic-flake paint with a red pinstripe, carbon weave, roughness noise. */
+function carTextures() {
+  if (_carTex) return _carTex
+  let seed = 7
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+  const paint = canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#0b0c10'; g.fillRect(0, 0, w, h)
+    for (let i = 0; i < 2600; i++) {
+      const v = 20 + rnd() * 50
+      g.fillStyle = `rgba(${v},${v + 4},${v + 12},${0.25 + rnd() * 0.4})`
+      g.fillRect(rnd() * w, rnd() * h, 1, 1)
+    }
+    g.fillStyle = '#b3121b'; g.fillRect(0, h * 0.47, w, h * 0.03)
+    g.fillStyle = '#d8d8d8'; g.fillRect(0, h * 0.52, w, h * 0.008)
+  })
+  paint.colorSpace = THREE.SRGBColorSpace
+  const carbon = canvasTex(64, 64, (g, w, h) => {
+    g.fillStyle = '#121214'; g.fillRect(0, 0, w, h)
+    for (let y = 0; y < h; y += 8) for (let x = 0; x < w; x += 8) {
+      const odd = ((x + y) / 8) % 2
+      const grd = odd ? g.createLinearGradient(x, y, x + 8, y) : g.createLinearGradient(x, y, x, y + 8)
+      grd.addColorStop(0, '#1c1c20'); grd.addColorStop(0.5, '#2e2e34'); grd.addColorStop(1, '#16161a')
+      g.fillStyle = grd; g.fillRect(x, y, 8, 8)
+    }
+  }, 4)
+  carbon.colorSpace = THREE.SRGBColorSpace
+  const rough = canvasTex(128, 128, (g, w, h) => {
+    g.fillStyle = '#5a5a5a'; g.fillRect(0, 0, w, h)
+    for (let i = 0; i < 1800; i++) { const v = 60 + rnd() * 90; g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(rnd() * w, rnd() * h, 2, 2) }
+  }, 2)
+  const tread = canvasTex(64, 256, (g, w, h) => {
+    g.fillStyle = '#141414'; g.fillRect(0, 0, w, h)
+    g.strokeStyle = '#050505'; g.lineWidth = 5
+    for (let y = 0; y < h; y += 16) { g.beginPath(); g.moveTo(0, y); g.lineTo(w / 2, y + 8); g.lineTo(w, y); g.stroke() }
+  })
+  tread.colorSpace = THREE.SRGBColorSpace
+  const rim = canvasTex(128, 128, (g, w, h) => {
+    g.fillStyle = '#0d0d0f'; g.fillRect(0, 0, w, h)
+    g.translate(w / 2, h / 2)
+    g.fillStyle = '#9aa0aa'; g.beginPath(); g.arc(0, 0, 50, 0, Math.PI * 2); g.fill()
+    g.fillStyle = '#1a1b1f'
+    for (let k = 0; k < 5; k++) { g.rotate((Math.PI * 2) / 5); g.beginPath(); g.moveTo(10, -6); g.lineTo(46, -16); g.lineTo(46, 16); g.lineTo(10, 6); g.fill() }
+    g.fillStyle = '#c8ccd4'; g.beginPath(); g.arc(0, 0, 9, 0, Math.PI * 2); g.fill()
+    g.strokeStyle = '#d0d4dc'; g.lineWidth = 3; g.beginPath(); g.arc(0, 0, 50, 0, Math.PI * 2); g.stroke()
+  })
+  rim.colorSpace = THREE.SRGBColorSpace
+  _carTex = { paint, carbon, rough, tread, rim }
+  return _carTex
+}
+/** Lower the front of a geometry linearly along z (wedge nose). */
+function wedge(geo, len, drop) {
+  const p = geo.attributes.position
+  for (let i = 0; i < p.count; i++) {
+    const z = p.getZ(i), y = p.getY(i)
+    if (y > 0) p.setY(i, y - Math.max(0, z / (len / 2)) * drop)
+  }
+  geo.computeVertexNormals()
+}
+/** Narrow the top of a geometry (rounded canopy). */
+function taperTop(geo, k) {
+  const p = geo.attributes.position
+  geo.computeBoundingBox()
+  const { min, max } = geo.boundingBox
+  for (let i = 0; i < p.count; i++) {
+    const t = (p.getY(i) - min.y) / (max.y - min.y)
+    const s = 1 - (1 - k) * t
+    p.setX(i, p.getX(i) * s)
+    p.setZ(i, p.getZ(i) * (1 - (1 - k) * 0.6 * t))
+  }
+  geo.computeVertexNormals()
+}
+/** Tyre with tread texture + textured 5-spoke rim (visual only). */
+function buildWheel(side) {
+  const t = carTextures()
+  const g = new THREE.Group()
+  const tyreGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.28, 24, 1, true)
+  tyreGeo.rotateZ(Math.PI / 2)
+  const tyre = new THREE.Mesh(tyreGeo, new THREE.MeshStandardMaterial({ map: t.tread, roughness: 0.9, metalness: 0, side: THREE.DoubleSide }))
+  tyre.castShadow = true
+  g.add(tyre)
+  const sideGeo = new THREE.TorusGeometry(0.3, 0.08, 8, 24)
+  for (const sx of [-0.12, 0.12]) {
+    const wall = new THREE.Mesh(sideGeo, new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.85 }))
+    wall.rotation.y = Math.PI / 2
+    wall.position.x = sx
+    g.add(wall)
+  }
+  const rimMat = new THREE.MeshStandardMaterial({ map: t.rim, metalness: 0.85, roughness: 0.3 })
+  for (const sx of [-0.141, 0.141]) {
+    const rim = new THREE.Mesh(new THREE.CircleGeometry(0.29, 24), rimMat)
+    rim.rotation.y = sx > 0 ? Math.PI / 2 : -Math.PI / 2
+    rim.position.x = sx
+    g.add(rim)
+  }
+  void side
+  return g
+}
 
 // Slightly smaller than the visual mesh so the chassis does not dig into barriers.
 const chassisW = 1.85
@@ -153,11 +263,7 @@ export class Car {
 
     this.wheelMeshes = []
     for (let i = 0; i < 4; i++) {
-      const geo = new THREE.CylinderGeometry(0.38, 0.38, 0.28, 16)
-      geo.rotateZ(Math.PI / 2)
-      const mat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.35, metalness: 0.4 })
-      const m = new THREE.Mesh(geo, mat)
-      m.castShadow = true
+      const m = buildWheel(i % 2 === 0 ? 1 : -1)
       scene.add(m)
       this.wheelMeshes.push(m)
     }
@@ -171,64 +277,102 @@ export class Car {
   }
 
   _buildMesh() {
+    // Visual only: rounded body + procedural canvas textures. Physics box is unchanged.
     const root = new THREE.Group()
     const visW = 2.05
-    const visH = 0.55
     const visL = 4.55
+    const tex = carTextures()
 
     const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x050505,
-      metalness: 0.85,
-      roughness: 0.28,
+      color: 0xffffff,
+      map: tex.paint,
+      roughnessMap: tex.rough,
+      metalness: 0.8,
+      roughness: 0.35,
     })
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0x0b0b0d, roughness: 0.6, metalness: 0.3, map: tex.carbon })
     const glassMat = new THREE.MeshStandardMaterial({
-      color: 0x1a2230,
+      color: 0x1a2534,
       metalness: 0.9,
-      roughness: 0.1,
+      roughness: 0.08,
       transparent: true,
-      opacity: 0.65,
+      opacity: 0.72,
     })
-    const chromeMat = new THREE.MeshStandardMaterial({
-      color: 0x888888,
-      metalness: 1,
-      roughness: 0.2,
-    })
+    const chromeMat = new THREE.MeshStandardMaterial({ color: 0xb8bcc4, metalness: 1, roughness: 0.18 })
 
-    const body = new THREE.Mesh(new THREE.BoxGeometry(visW, visH, visL), bodyMat)
+    // Lower body: rounded slab with a gentle wedge (nose lower than tail)
+    const lowerGeo = new RoundedBoxGeometry(visW, 0.5, visL, 4, 0.2)
+    wedge(lowerGeo, visL, 0.08)
+    const body = new THREE.Mesh(lowerGeo, bodyMat)
     body.position.y = 0.05
     body.castShadow = true
     root.add(body)
 
-    const hood = new THREE.Mesh(new THREE.BoxGeometry(visW * 0.92, 0.18, 1.6), bodyMat)
-    hood.position.set(0, 0.22, 1.35)
+    // Hood bulge
+    const hood = new THREE.Mesh(new RoundedBoxGeometry(visW * 0.86, 0.16, 1.7, 3, 0.07), bodyMat)
+    hood.position.set(0, 0.28, 1.3)
+    hood.rotation.x = 0.04
     hood.castShadow = true
     root.add(hood)
     this.hoodMesh = hood
 
-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.55, 1.55), bodyMat)
-    cabin.position.set(0, 0.48, -0.15)
+    // Wheel-arch flares
+    for (const x of [-1, 1]) for (const z of [1.38, -1.38]) {
+      const flare = new THREE.Mesh(new THREE.SphereGeometry(0.55, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), bodyMat)
+      flare.scale.set(0.42, 0.62, 1.05)
+      flare.position.set(x * (visW / 2 - 0.08), 0.1, z)
+      flare.castShadow = true
+      root.add(flare)
+    }
+
+    // Cabin: rounded canopy, tapered top
+    const cabGeo = new RoundedBoxGeometry(1.72, 0.56, 1.9, 4, 0.24)
+    taperTop(cabGeo, 0.82)
+    const cabin = new THREE.Mesh(cabGeo, bodyMat)
+    cabin.position.set(0, 0.52, -0.25)
     cabin.castShadow = true
     root.add(cabin)
 
-    const windshield = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.45, 0.08), glassMat)
-    windshield.position.set(0, 0.55, 0.62)
-    windshield.rotation.x = -0.35
+    const windshield = new THREE.Mesh(new RoundedBoxGeometry(1.5, 0.5, 0.06, 2, 0.03), glassMat)
+    windshield.position.set(0, 0.6, 0.68)
+    windshield.rotation.x = -0.62
     root.add(windshield)
-
-    const rearGlass = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.4, 0.08), glassMat)
-    rearGlass.position.set(0, 0.52, -0.9)
-    rearGlass.rotation.x = 0.28
+    const rearGlass = new THREE.Mesh(new RoundedBoxGeometry(1.4, 0.42, 0.06, 2, 0.03), glassMat)
+    rearGlass.position.set(0, 0.6, -1.2)
+    rearGlass.rotation.x = 0.55
     root.add(rearGlass)
+    for (const x of [-0.87, 0.87]) {
+      const side = new THREE.Mesh(new RoundedBoxGeometry(0.05, 0.34, 1.3, 2, 0.02), glassMat)
+      side.position.set(x * 0.98, 0.6, -0.25)
+      root.add(side)
+    }
 
     for (const x of [-1.05, 1.05]) {
-      const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.1, 0.22), chromeMat)
-      mirror.position.set(x, 0.42, 0.55)
+      const mirror = new THREE.Mesh(new RoundedBoxGeometry(0.2, 0.12, 0.26, 2, 0.05), chromeMat)
+      mirror.position.set(x, 0.46, 0.55)
       root.add(mirror)
     }
 
-    const bumper = new THREE.Mesh(new THREE.BoxGeometry(visW * 0.98, 0.22, 0.28), bodyMat)
-    bumper.position.set(0, -0.05, 2.2)
+    // Front & rear bumpers (carbon), side skirts, rear spoiler
+    const bumper = new THREE.Mesh(new RoundedBoxGeometry(visW * 0.98, 0.22, 0.32, 3, 0.1), trimMat)
+    bumper.position.set(0, -0.06, 2.18)
     root.add(bumper)
+    const rearB = new THREE.Mesh(new RoundedBoxGeometry(visW * 0.98, 0.24, 0.3, 3, 0.1), trimMat)
+    rearB.position.set(0, -0.04, -2.2)
+    root.add(rearB)
+    for (const x of [-1, 1]) {
+      const skirt = new THREE.Mesh(new RoundedBoxGeometry(0.1, 0.12, 2.0, 2, 0.04), trimMat)
+      skirt.position.set(x * (visW / 2 + 0.01), -0.17, 0)
+      root.add(skirt)
+    }
+    const spoiler = new THREE.Mesh(new RoundedBoxGeometry(1.8, 0.06, 0.38, 2, 0.03), trimMat)
+    spoiler.position.set(0, 0.62, -2.05)
+    root.add(spoiler)
+    for (const x of [-0.7, 0.7]) {
+      const st = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.32, 0.12), trimMat)
+      st.position.set(x, 0.44, -2.05)
+      root.add(st)
+    }
 
     const lightMat = new THREE.MeshStandardMaterial({
       color: 0xfff2cc,
@@ -236,9 +380,10 @@ export class Car {
       emissiveIntensity: 1.4,
     })
     this.headLightMeshes = []
-    for (const x of [-0.7, 0.7]) {
-      const hl = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.14, 0.08), lightMat.clone())
-      hl.position.set(x, 0.12, 2.3)
+    for (const x of [-0.68, 0.68]) {
+      const hl = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.3, 4, 10), lightMat.clone())
+      hl.rotation.z = Math.PI / 2
+      hl.position.set(x, 0.14, 2.27)
       root.add(hl)
       this.headLightMeshes.push(hl)
     }
@@ -248,9 +393,10 @@ export class Car {
       emissive: 0xff0000,
       emissiveIntensity: 0.6,
     })
-    for (const x of [-0.75, 0.75]) {
-      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.12, 0.06), tailMat)
-      tl.position.set(x, 0.2, -2.25)
+    for (const x of [-0.72, 0.72]) {
+      const tl = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.36, 4, 10), tailMat)
+      tl.rotation.z = Math.PI / 2
+      tl.position.set(x, 0.2, -2.3)
       root.add(tl)
     }
 
@@ -277,12 +423,12 @@ export class Car {
     this.scannerGroup.add(housing)
     root.add(this.scannerGroup)
 
-    this.headLightL = new THREE.SpotLight(0xfff0d0, 2.2, 55, Math.PI / 5, 0.45, 1)
-    this.headLightR = new THREE.SpotLight(0xfff0d0, 2.2, 55, Math.PI / 5, 0.45, 1)
+    this.headLightL = new THREE.SpotLight(0xfff0d0, 2.2, 55, Math.PI / 4.5, 0.5, 1)
+    this.headLightR = new THREE.SpotLight(0xfff0d0, 2.2, 55, Math.PI / 4.5, 0.5, 1)
     this.headLightL.position.set(-0.7, 0.2, 2.35)
     this.headLightR.position.set(0.7, 0.2, 2.35)
-    this.headLightL.target.position.set(-0.7, 0, 12)
-    this.headLightR.target.position.set(0.7, 0, 12)
+    this.headLightL.target.position.set(-0.9, 0, 16)
+    this.headLightR.target.position.set(0.9, 0, 16)
     root.add(this.headLightL, this.headLightL.target, this.headLightR, this.headLightR.target)
 
     this.scannerLight = new THREE.PointLight(0xff1a1a, 1.8, 8, 2)
@@ -480,11 +626,12 @@ export class Car {
   setTimeOfDay(mode) {
     const night = mode !== 'day'
     this._night = night
-    const spot = night ? 3.4 : 0.08
+    // Stronger night headlights (physically based units: candela, decay 1)
+    const spot = night ? 60 : 0.08
     this.headLightL.intensity = spot
     this.headLightR.intensity = spot
-    this.headLightL.distance = night ? 70 : 20
-    this.headLightR.distance = night ? 70 : 20
+    this.headLightL.distance = night ? 95 : 20
+    this.headLightR.distance = night ? 95 : 20
     for (const m of this.headLightMeshes) {
       m.material.emissiveIntensity = night ? 2.0 : 0.2
     }

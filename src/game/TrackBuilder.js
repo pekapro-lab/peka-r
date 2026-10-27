@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import * as CANNON from 'cannon-es'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 function catmullRom(p0, p1, p2, p3, t) {
   const t2 = t * t
@@ -299,13 +300,15 @@ export function buildTrack(world, scene, def) {
     group.add(post)
   }
 
+  // Street lamps on every circuit (visual only, no colliders, outside the walls).
+  const lamps = addTrackLamps(group, path, half, distToPath, !isDay)
+
   for (const c of group.children) c.userData.road = true
   const sceneryStart = group.children.length
   // Scenery depending on theme
   const isNight = def.timeOfDay !== 'day'
   if (def.theme === 'night-city') {
     addGrandstands(group, path, half, def)
-    addStreetLights(group, path, half, isNight)
   } else if (def.theme === 'coast') {
     addCoastScenery(group, path, half, def)
   } else if (def.theme === 'mountain') {
@@ -327,6 +330,11 @@ export function buildTrack(world, scene, def) {
     if (meshIntrudes(m, distToPath, corridor)) { m.parent?.remove(m); sceneryFixed.removed++ } else sceneryFixed.sunk++
   }
   void sceneryStart
+  // Scenery check result is computed on the individual meshes, before they are merged.
+  const sceneryResult = sceneryCheck()
+  // Performance (mobile/WebKit): merge all static meshes per material -> a few dozen draw calls
+  // instead of ~1-2k meshes. Visual result is identical.
+  const merged = mergeStatic(group)
 
   scene.add(group)
 
@@ -348,7 +356,9 @@ export function buildTrack(world, scene, def) {
     name: def.name,
     id: def.id,
     lighting: def.lighting,
-    sceneryCheck,
+    sceneryCheck: () => sceneryResult,
+    lamps,
+    merged,
     sceneryFixed,
     dispose() {
       scene.remove(group)
@@ -375,37 +385,6 @@ function addGrandstands(group, path, half, def) {
     seats.position.set(base.x, 3.2, base.z)
     seats.rotation.y = Math.atan2(dir.x, dir.z)
     group.add(seats)
-  }
-}
-
-function addStreetLights(group, path, half, isNight = true) {
-  const poleMat = new THREE.MeshStandardMaterial({ color: 0x22262e, metalness: 0.6, roughness: 0.4 })
-  for (let i = 0; i < path.length; i += 10) {
-    const a = path[i]
-    const b = path[(i + 1) % path.length]
-    const dir = new THREE.Vector3().subVectors(b, a).normalize()
-    const side = new THREE.Vector3(-dir.z, 0, dir.x)
-    for (const sign of [1, -1]) {
-      const p = a.clone().addScaledVector(side, sign * (half + 2.2))
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 5.5, 6), poleMat)
-      pole.position.set(p.x, 2.75, p.z)
-      group.add(pole)
-      const head = new THREE.Mesh(
-        new THREE.BoxGeometry(0.55, 0.12, 0.35),
-        new THREE.MeshStandardMaterial({
-          color: 0x222222,
-          emissive: isNight ? 0xffd9a0 : 0x000000,
-          emissiveIntensity: isNight ? 0.8 : 0,
-        }),
-      )
-      head.position.set(p.x, 5.45, p.z)
-      group.add(head)
-      if (isNight) {
-        const lamp = new THREE.PointLight(0xffd9a0, 0.7, 26, 2)
-        lamp.position.set(p.x, 5.2, p.z)
-        group.add(lamp)
-      }
-    }
   }
 }
 
@@ -655,4 +634,136 @@ export function findSceneryIntrusions(group, distToPath, corridor) {
     if (meshIntrudes(c, distToPath, corridor)) out.push(c)
   }
   return out
+}
+
+/** Bake and merge static meshes that share a material (and shadow flags) into one mesh each. */
+function mergeStatic(group) {
+  group.updateMatrixWorld(true)
+  const buckets = new Map()
+  const keep = []
+  for (const c of [...group.children]) {
+    if (!c.isMesh || c.userData.noMerge) { keep.push(c); continue }
+    const key = `${c.material.uuid}|${c.castShadow ? 1 : 0}${c.receiveShadow ? 1 : 0}|${c.userData.road ? 1 : 0}`
+    if (!buckets.has(key)) buckets.set(key, [])
+    buckets.get(key).push(c)
+  }
+  let before = 0, after = 0
+  for (const list of buckets.values()) {
+    before += list.length
+    if (list.length < 2) { after++; continue }
+    const geos = []
+    for (const m of list) {
+      let g = m.geometry.clone()
+      if (g.index === null) g = g.toNonIndexed()
+      for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name)
+      if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2))
+      if (!g.index) { const idx = []; for (let i = 0; i < g.attributes.position.count; i++) idx.push(i); g.setIndex(idx) }
+      g.applyMatrix4(m.matrixWorld)
+      geos.push(g)
+    }
+    const mergedGeo = mergeGeometries(geos, false)
+    if (!mergedGeo) { after += list.length; continue }
+    const mesh = new THREE.Mesh(mergedGeo, list[0].material)
+    mesh.castShadow = list[0].castShadow
+    mesh.receiveShadow = list[0].receiveShadow
+    mesh.userData.road = !!list[0].userData.road
+    mesh.renderOrder = list[0].renderOrder
+    for (const m of list) { group.remove(m); m.geometry.dispose() }
+    for (const g of geos) g.dispose()
+    group.add(mesh)
+    after++
+  }
+  return { before, after: after + keep.length }
+}
+
+let _poolTex = null
+function poolTexture() {
+  if (_poolTex) return _poolTex
+  const c = document.createElement('canvas')
+  c.width = c.height = 128
+  const ctx = c.getContext('2d')
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64)
+  g.addColorStop(0, 'rgba(255,214,150,0.95)')
+  g.addColorStop(0.45, 'rgba(255,190,120,0.45)')
+  g.addColorStop(1, 'rgba(255,170,100,0)')
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, 128, 128)
+  _poolTex = new THREE.CanvasTexture(c)
+  _poolTex.colorSpace = THREE.SRGBColorSpace
+  return _poolTex
+}
+
+/**
+ * Street lamps along the circuit, alternating sides, outside the barriers (half + 3.4 m).
+ * No physics bodies. At night the light is faked (no real lights): emissive lamp heads,
+ * an additive glow halo, and an additive light pool painted on the road under each lamp.
+ */
+function addTrackLamps(group, path, half, distToPath, night) {
+  const N = path.length
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x3a3f48, metalness: 0.6, roughness: 0.45 })
+  const headMat = new THREE.MeshStandardMaterial({
+    color: night ? 0xfff1d6 : 0xd8d8d0,
+    emissive: 0xffd9a0,
+    emissiveIntensity: night ? 3.0 : 0.0,
+    roughness: 0.4,
+  })
+  const poolMat = new THREE.MeshBasicMaterial({
+    map: poolTexture(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    opacity: 0.85, polygonOffset: true, polygonOffsetFactor: -2,
+  })
+  const haloMat = new THREE.MeshBasicMaterial({
+    map: poolTexture(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.9, fog: false, side: THREE.DoubleSide,
+  })
+  // ~1 lamp every 26 m
+  let acc = 0, side = 1, count = 0
+  const spacing = 22
+  for (let i = 0; i < N; i++) {
+    const a = path[i], b = path[(i + 1) % N]
+    acc += a.distanceTo(b)
+    if (acc < spacing) continue
+    acc = 0
+    side = -side
+    const dir = new THREE.Vector3().subVectors(b, a).setY(0).normalize()
+    const nrm = new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(side)
+    let s = side
+    let p = a.clone().addScaledVector(nrm, half + 3.4)
+    if (distToPath(p.x, p.z) < half + 3.0) { // inner hairpin: try the other side
+      s = -side
+      p = a.clone().addScaledVector(nrm, -(half + 3.4))
+      if (distToPath(p.x, p.z) < half + 3.0) continue
+    }
+    const toRoad = new THREE.Vector3(a.x - p.x, 0, a.z - p.z).normalize()
+    const H = 6.2
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, H, 6), poleMat)
+    pole.position.set(p.x, H / 2, p.z)
+    group.add(pole)
+    const armLen = 2.4
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, armLen), poleMat)
+    arm.position.set(p.x + toRoad.x * armLen / 2, H - 0.05, p.z + toRoad.z * armLen / 2)
+    arm.rotation.y = Math.atan2(toRoad.x, toRoad.z)
+    group.add(arm)
+    const hx = p.x + toRoad.x * armLen, hz = p.z + toRoad.z * armLen
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.14, 0.7), headMat)
+    head.position.set(hx, H - 0.16, hz)
+    head.rotation.y = arm.rotation.y
+    group.add(head)
+    if (night) {
+      const pool = new THREE.Mesh(new THREE.CircleGeometry(8.5, 20), poolMat)
+      pool.rotation.x = -Math.PI / 2
+      pool.position.set(hx + toRoad.x * 1.5, 0.045, hz + toRoad.z * 1.5)
+      pool.renderOrder = 1
+      group.add(pool)
+      // horizontal halo under the head reads as a glowing bulb from the driver's view
+      for (const ry of [0, Math.PI / 2]) {
+        const halo = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 2.2), haloMat)
+        halo.position.set(hx, H - 0.3, hz)
+        halo.rotation.y = ry
+        halo.renderOrder = 2
+        group.add(halo)
+      }
+    }
+    void s
+    count++
+  }
+  return count
 }

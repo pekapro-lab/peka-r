@@ -44,17 +44,24 @@ export class Game {
   }
 
   _setupRenderer() {
+    // iOS/iPadOS (all browsers there are WebKit): smaller pixel ratio + cheaper shadows.
+    const ua = navigator.userAgent || ''
+    this.isIOS = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
+    this._prMax = Math.min(window.devicePixelRatio || 1, 1.5)
+    this._pr = this._prMax
+    this._perf = { t: 0, frames: 0 }
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,
       powerPreference: 'high-performance',
+      stencil: false,
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+    this.renderer.setPixelRatio(this._pr)
     this.renderer.setSize(window.innerWidth, window.innerHeight)
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    this.renderer.shadowMap.type = this.isIOS ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap
     this.renderer.domElement.className = 'game-canvas'
     this.root.appendChild(this.renderer.domElement)
 
@@ -87,7 +94,8 @@ export class Game {
 
     this.env = new Environment(this.scene)
     // Wider shadow camera so day shadows look good on track
-    this.sun.shadow.mapSize.set(2048, 2048)
+    const sm = this.isIOS ? 1024 : 2048
+    this.sun.shadow.mapSize.set(sm, sm)
     this.sun.shadow.camera.left = -90
     this.sun.shadow.camera.right = 90
     this.sun.shadow.camera.top = 90
@@ -204,6 +212,24 @@ export class Game {
     if (!this._raf) this._loop()
   }
 
+  /** Adaptive resolution: drop the pixel ratio when frames are slow, restore it when fast. */
+  _adaptResolution(rawDt) {
+    if (this.state !== 'racing' || !(rawDt > 0) || rawDt > 0.5) return
+    const p = this._perf
+    p.t += rawDt; p.frames++
+    if (p.t < 1.5) return
+    const avg = p.t / p.frames
+    p.t = 0; p.frames = 0
+    let pr = this._pr
+    if (avg > 1 / 40 && pr > 0.75) pr = Math.max(0.75, pr - 0.15)
+    else if (avg < 1 / 55 && pr < this._prMax) pr = Math.min(this._prMax, pr + 0.1)
+    if (pr !== this._pr) {
+      this._pr = pr
+      this.renderer.setPixelRatio(pr)
+      this.renderer.setSize(window.innerWidth, window.innerHeight)
+    }
+  }
+
   _applyLighting(mode) {
     this.env?.apply(mode)
     if (mode === 'day') {
@@ -221,17 +247,17 @@ export class Game {
       this.renderer.toneMappingExposure = 1.15
     } else {
       this.scene.background = new THREE.Color(0x03050a)
-      this.scene.fog = new THREE.FogExp2(0x05070f, 0.011)
+      this.scene.fog = new THREE.FogExp2(0x070a16, 0.008)
       this.hemi.color.set(0x4a5a88)
       this.hemi.groundColor.set(0x080a10)
-      this.hemi.intensity = 0.22
-      this.sun.intensity = 0.12
+      this.hemi.intensity = 0.75
+      this.sun.intensity = 0.55
       this.sun.color.set(0x6688cc)
       this.sun.position.set(-40, 60, 20)
       this.sun.castShadow = false
-      this.ambient.intensity = 0.2
-      this.ambient.color.set(0x1a2238)
-      this.renderer.toneMappingExposure = 1.0
+      this.ambient.intensity = 0.6
+      this.ambient.color.set(0x24304e)
+      this.renderer.toneMappingExposure = 1.25
     }
   }
 
@@ -278,7 +304,9 @@ export class Game {
 
   _loop = () => {
     this._raf = requestAnimationFrame(this._loop)
-    const dt = Math.min(this.clock.getDelta(), 0.05)
+    const rawDt = this.clock.getDelta()
+    const dt = Math.min(rawDt, 0.05)
+    this._adaptResolution(rawDt)
 
     if (this.state === 'countdown') {
       // keep car still; still step tiny physics for stability
@@ -633,7 +661,9 @@ export class Game {
     const h = window.innerHeight
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5))
+    this._prMax = Math.min(window.devicePixelRatio || 1, 1.5)
+    this._pr = Math.min(this._pr, this._prMax)
+    this.renderer.setPixelRatio(this._pr)
     this.renderer.setSize(w, h)
   }
 }
