@@ -264,6 +264,7 @@ export class Game {
   pause() {
     if (this.state !== 'racing') return
     this.state = 'paused'
+    this.audio.silence()
     this.ui.showPause(true)
   }
 
@@ -277,6 +278,7 @@ export class Game {
   exitToMenu() {
     this.cleanupRace()
     this.state = 'menu'
+    this.audio.silence()
     this.ui.showPause(false)
     this.ui.showCountdown('')
     this.ui.hideCountdown()
@@ -486,7 +488,7 @@ export class Game {
       this._recoverGrace = Math.max(0, this._recoverGrace - dt)
       // During grace, gently push the car onto its wheels
       if (wheels === 0) {
-        body.applyForce(new CANNON.Vec3(0, -9000, 0), body.position)
+        body.applyForce(new CANNON.Vec3(0, -9000, 0))
       }
       this._stuckTime = 0
       this._airTime = 0
@@ -505,7 +507,7 @@ export class Game {
 
     // Mild downforce while airborne so rays reconnect
     if (wheels === 0 && pos.y > 0.55 && body.velocity.y > -2) {
-      body.applyForce(new CANNON.Vec3(0, -7000, 0), body.position)
+      body.applyForce(new CANNON.Vec3(0, -7000, 0))
     }
 
     // Stuck while trying to move (forward OR reverse) — auto Recolocar for both
@@ -522,7 +524,6 @@ export class Game {
         // Pull toward centerline; don't fight forward/reverse engine force with huge Y pops
         body.applyForce(
           new CANNON.Vec3((dx / len) * 3500 * dt, 2500 * dt, (dz / len) * 3500 * dt),
-          body.position,
         )
         body.angularVelocity.x *= 0.7
         body.angularVelocity.z *= 0.7
@@ -604,6 +605,7 @@ export class Game {
         }
         if (this.lap >= this.totalLaps) {
           this.state = 'finished'
+          this.audio.silence()
           this.ui.showCountdown('META')
           this.audio.beep(990, 0.25)
           setTimeout(() => {

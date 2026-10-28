@@ -535,7 +535,8 @@ export class Car {
         const fwd = new CANNON.Vec3()
         this.chassisBody.vectorToWorldFrame(new CANNON.Vec3(0, 0, 1), fwd)
         const boost = (12 - this.speedKmh) * 400
-        this.chassisBody.applyForce(fwd.scale(boost, fwd), this.chassisBody.position)
+        // cannon-es: 2nd arg is relative to the centre of mass; omit it (world position caused a huge yaw torque)
+        this.chassisBody.applyForce(fwd.scale(boost, fwd))
       }
     }
 

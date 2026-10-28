@@ -105,6 +105,16 @@ export class AudioEngine {
     e.gain.gain.setTargetAtTime(vol, t, 0.06)
   }
 
+  /** Fade the engine to silence (race finished, pause, menu, app hidden). setDriving() brings it back. */
+  silence(immediate = false) {
+    if (!this._engine || !this.ctx) return
+    const t = this.ctx.currentTime
+    const p = this._engine.gain.gain
+    p.cancelScheduledValues(t)
+    if (immediate) { p.setValueAtTime(0.0001, t); p.value = 0.0001 } else p.setTargetAtTime(0.0001, t, 0.05)
+    this._rpm = 900
+  }
+
   beep(freq = 660, dur = 0.12) {
     if (!this.ctx || this.muted) return
     const o = this.ctx.createOscillator()

@@ -15,3 +15,15 @@ document.documentElement.dataset.version = __PEKA_R_VERSION__
 ui.setMute(game.audio.muted)
 ui.showMenu(true)
 ui.showHud(false)
+
+// App to background / tab hidden: pause the race and silence the engine; resume the audio context on return
+document.addEventListener('visibilitychange', () => {
+  const a = game.audio
+  if (document.hidden) {
+    if (game.state === 'racing') game.pause()
+    a.silence(true)
+    a.ctx?.suspend?.().catch(() => {})
+  } else {
+    a.ctx?.resume?.().catch(() => {})
+  }
+})
