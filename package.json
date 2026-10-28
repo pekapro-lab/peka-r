@@ -1,7 +1,7 @@
 {
   "name": "peka-r",
   "private": true,
-  "version": "1.0.7",
+  "version": "1.0.8",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,8 +14,8 @@
     "test:ground": "vite build && node scripts/ground-scan.mjs",
     "test:laps": "vite build && node scripts/lap-offsets.mjs && node scripts/corridor-escape.mjs",
     "test:escape": "vite build && node scripts/corridor-escape.mjs",
-    "test:stick": "vite build && node scripts/stick-check.mjs && node scripts/launch-straight.mjs && node scripts/audio-silence.mjs",
-    "test:all": "vite build && node scripts/ground-scan.mjs && node scripts/curve-regression.mjs && node scripts/lap-offsets.mjs && node scripts/corridor-escape.mjs && node scripts/stick-check.mjs && node scripts/launch-straight.mjs && node scripts/audio-silence.mjs"
+    "test:stick": "vite build && node scripts/stick-check.mjs && node scripts/launch-straight.mjs && node scripts/audio-silence.mjs && node scripts/finish-panel.mjs",
+    "test:all": "vite build && node scripts/ground-scan.mjs && node scripts/curve-regression.mjs && node scripts/lap-offsets.mjs && node scripts/corridor-escape.mjs && node scripts/stick-check.mjs && node scripts/launch-straight.mjs && node scripts/audio-silence.mjs && node scripts/finish-panel.mjs"
   },
   "devDependencies": {
     "vite": "^7.1.7"

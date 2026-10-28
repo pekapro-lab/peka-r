@@ -279,6 +279,8 @@ canvas.game-canvas {
 .pause-card h2 { margin-bottom: 14px; letter-spacing: 0.12em; }
 
 .pause-card .menu-actions { flex-direction: column; }
+.pause-card .hidden { display: none; }
+.pause-results { margin: -4px 0 14px; opacity: 0.9; font-variant-numeric: tabular-nums; }
 
 .touch {
   position: absolute;

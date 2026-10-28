@@ -72,6 +72,7 @@ export class UI {
       <div class="pause-menu hidden" id="pause">
         <div class="pause-card panel interactive">
           <h2 id="pause-title">Pausa</h2>
+          <p class="pause-results hidden" id="pause-results"></p>
           <div class="menu-actions">
             <button class="btn primary" id="btn-resume" type="button">Continuar</button>
             <button class="btn" id="btn-restart" type="button">Reiniciar carrera</button>
@@ -165,7 +166,26 @@ export class UI {
   }
 
   showPause(v) {
+    if (v) this._setFinishMode(false)
     this.pause.classList.toggle('hidden', !v)
+  }
+
+  /** Finish panel: results + Repetir / Menú principal (no Continuar / Recolocar). */
+  showFinish({ total, best }) {
+    this._setFinishMode(true)
+    this.setPauseTitle('Carrera terminada')
+    const r = this.el.querySelector('#pause-results')
+    r.textContent = `Total: ${formatTime(total)} · Mejor vuelta: ${best ? formatTime(best) : '—'}`
+    this.pause.classList.remove('hidden')
+  }
+
+  _setFinishMode(on) {
+    const q = (s) => this.el.querySelector(s)
+    q('#btn-resume').classList.toggle('hidden', on)
+    q('#btn-recover-pause').classList.toggle('hidden', on)
+    q('#pause-results').classList.toggle('hidden', !on)
+    q('#btn-restart').textContent = on ? 'Repetir carrera' : 'Reiniciar carrera'
+    q('#btn-restart').classList.toggle('primary', on)
   }
 
   setPauseTitle(text) {

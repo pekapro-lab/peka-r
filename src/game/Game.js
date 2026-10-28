@@ -276,6 +276,7 @@ export class Game {
   }
 
   exitToMenu() {
+    clearTimeout(this._finishTimer)
     this.cleanupRace()
     this.state = 'menu'
     this.audio.silence()
@@ -335,6 +336,7 @@ export class Game {
           this.ui.hideCountdown()
           this.state = 'racing'
           this.lapStart = performance.now()
+          this._raceTime = 0
         }
       }
       this.renderer.render(this.scene, this.camera)
@@ -449,6 +451,7 @@ export class Game {
 
   restartRace() {
     if (!this._trackId) return
+    clearTimeout(this._finishTimer)
     this.ui.showPause(false)
     this.ui.setPauseTitle('Pausa')
     this.ui.hideCountdown()
@@ -599,6 +602,7 @@ export class Game {
       const lapTime = (performance.now() - this.lapStart) / 1000
       if (lapTime > 8) {
         // ignore tiny accidental wraps
+        this._raceTime = (this._raceTime || 0) + lapTime
         if (!this.bestLap || lapTime < this.bestLap) {
           this.bestLap = lapTime
           localStorage.setItem(bestKey(this.track.id), String(lapTime))
@@ -608,10 +612,16 @@ export class Game {
           this.audio.silence()
           this.ui.showCountdown('META')
           this.audio.beep(990, 0.25)
-          setTimeout(() => {
+          const totalTime = this._raceTime
+          const best = this.bestLap
+          clearTimeout(this._finishTimer)
+          // pause() only works while 'racing', so show the finish panel directly
+          this._finishTimer = setTimeout(() => {
+            this._finishTimer = 0
+            if (this.state !== 'finished') return
             this.ui.hideCountdown()
-            this.pause()
-            this.ui.setPauseTitle('Carrera terminada')
+            this.audio.silence()
+            this.ui.showFinish({ total: totalTime, best })
           }, 1400)
         } else {
           this.lap += 1
